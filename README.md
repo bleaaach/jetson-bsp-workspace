@@ -19,6 +19,34 @@ to obtain the required BSP inputs locally.
 Set `JETSON_BSP_VERSION` to select a BSP release. Set `JETSON_HOST` only
 when deploying to a Jetson target.
 
+## Source-To-Production BSP Workflow
+
+`jetson-bsp-release-workflow.sh` combines the source-build and DIY-BSP
+processes into one explicit pipeline:
+
+```text
+prepare -> build -> flash development device -> configure it -> backup -> package -> massflash
+```
+
+The script runs against an extracted `Linux_for_Tegra` workspace. Set the
+cross-toolchain prefix before building, then validate the selected board:
+
+```bash
+export CROSS_COMPILE="$PWD/aarch64--glibc--stable-2022.08-1/bin/aarch64-buildroot-linux-gnu-"
+./jetson-bsp-release-workflow.sh validate --board recomputer-orin-j401
+./jetson-bsp-release-workflow.sh build --board recomputer-orin-j401
+```
+
+`flash`, `backup`, and `package` require `--yes`. They require a Jetson in
+recovery mode. After `flash`, boot the development Jetson and install or
+configure the runtime content that the final image must contain. Return it to
+recovery mode, then build a mass-flash package:
+
+```bash
+./jetson-bsp-release-workflow.sh pipeline --board recomputer-orin-j401 \
+    --massflash 5 --yes
+```
+
 ## Scope
 
 The current build path targets drivers already present and registered in the
