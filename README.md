@@ -47,6 +47,17 @@ recovery mode, then build a mass-flash package:
     --massflash 5 --yes
 ```
 
+The workflow orchestration can be checked without a Jetson or NVIDIA BSP
+inputs:
+
+```bash
+./tests/test-release-workflow.sh
+```
+
+This test verifies command wiring and arguments with a temporary fixture. A
+real build still requires a complete extracted NVIDIA BSP, and flash/backup
+verification requires hardware in recovery mode.
+
 ## Scope
 
 The current build path targets drivers already present and registered in the

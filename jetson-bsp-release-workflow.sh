@@ -64,7 +64,8 @@ require_confirmation() {
 }
 
 validate() {
-    require_file "${L4T_ROOT}/apply_binaries.sh"
+    [[ -f "${L4T_ROOT}/apply_binaries.sh" ]] || die \
+        "${L4T_ROOT} is not a complete extracted Linux_for_Tegra BSP. Pass --l4t-root for the official BSP workspace."
     require_file "${L4T_ROOT}/source/nvbuild.sh"
     require_file "${L4T_ROOT}/source/do_copy.sh"
     require_file "${L4T_ROOT}/tools/kernel_flash/l4t_initrd_flash.sh"
