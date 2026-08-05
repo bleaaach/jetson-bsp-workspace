@@ -1,0 +1,36 @@
+# Generated kernel builds and module artifacts
+Build/
+*.ko
+*.ko.gz
+*.ko.xz
+*.ko.zst
+*.o
+*.a
+*.cmd
+vmlinux*
+System.map
+
+# Downloaded/extracted BSP sources and archives
+Downloads/
+Source/
+Linux_for_Tegra/
+toolchain/
+tools/
+*.tbz2
+*.tar
+*.tar.gz
+*.tar.xz
+*.tar.bz2
+
+# Local credentials and generated signing material
+.env
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Editor and OS files
+.DS_Store
+*.swp
+*.swo
+
