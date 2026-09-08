@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jetson BSP Module Manager</title>
+
+  <!-- XTerm.js vendored locally (offline-friendly) -->
+  <link rel="stylesheet" href="/static/vendor/xterm.css" />
+  <script src="/static/vendor/xterm.js"></script>
+  <script src="/static/vendor/addon-fit.js"></script>
+  <script src="/static/vendor/addon-web-links.js"></script>
+
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     TOP NAVIGATION
+══════════════════════════════════════════════════════════════════ -->
+<header class="topbar">
+  <div class="topbar-brand">
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="28" height="28" rx="6" fill="#1a1a2e"/>
+      <path d="M6 20L14 8L22 20H6Z" fill="#00d4ff" opacity="0.9"/>
+      <circle cx="14" cy="18" r="2.5" fill="#00d4ff"/>
+    </svg>
+    <span class="topbar-title">Jetson BSP Manager</span>
+  </div>
+
+  <nav class="topbar-nav">
+    <button class="nav-btn active" data-tab="query">查询</button>
+    <button class="nav-btn" data-tab="thor">Thor 编译</button>
+    <button class="nav-btn" data-tab="hybrid">DIY Hybrid</button>
+    <button class="nav-btn" data-tab="build">驱动编译</button>
+    <button class="nav-btn" data-tab="devices">设备</button>
+    <button class="nav-btn" data-tab="configs">配置</button>
+    <button class="nav-btn" data-tab="ssh">SSH</button>
+    <button class="nav-btn" data-tab="firmware">固件同步</button>
+  </nav>
+
+  <div class="topbar-right">
+    <div class="bsp-version-badge" id="activeBspBadge">
+      <span class="badge-label">BSP</span>
+      <select id="globalBspVersion" class="version-select">
+        <option value="R36.4.4">R36.4.4</option>
+      </select>
+    </div>
+    <button class="icon-btn" id="btnRefreshVersions" title="刷新版本列表" onclick="refreshBspVersions()">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/><path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9H3.1z"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     MAIN LAYOUT
+══════════════════════════════════════════════════════════════════ -->
+<div class="main-layout">
+
+  <!-- ─── LEFT SIDEBAR: BSP Versions ─── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-title">BSP 版本</span>
+      <button class="btn-sm btn-ghost" onclick="showDownloadModal()" title="下载新版本">下载</button>
+    </div>
+    <div class="version-list" id="versionList">
+      <div class="loading-spinner">加载中...</div>
+    </div>
+  </aside>
+
+  <!-- ─── MAIN CONTENT ─── -->
+  <main class="content">
+
+    <!-- ═══════════════ PANEL: QUERY ═══════════════ -->
+    <section class="panel" id="panelQuery" data-active="true">
+      <div class="search-hero">
+        <h1 class="hero-title">Jetson 内核模块查询</h1>
+        <p class="hero-subtitle">输入模块名，查询源码、配置状态、编译状态</p>
+        <div class="search-box">
+          <input type="text" id="searchInput" class="search-input"
+                 placeholder="输入模块名，如 qmi_wwan, pl2303, rtw89_8852be..."
+                 autocomplete="off" spellcheck="false" />
+          <div class="search-tags">
+            <span class="tag" onclick="searchPreset('qmi_wwan')">qmi_wwan</span>
+            <span class="tag" onclick="searchPreset('pl2303')">pl2303</span>
+            <span class="tag" onclick="searchPreset('rtw89_8852be')">rtw89_8852be</span>
+            <span class="tag" onclick="searchPreset('iptable_raw')">iptable_raw</span>
+            <span class="tag" onclick="searchPreset('ftdi_sio')">ftdi_sio</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="search-results" id="searchResults" style="display:none;">
+        <div class="results-header"><span id="resultsCount"></span></div>
+        <div class="results-list" id="resultsList"></div>
+      </div>
+
+      <div class="module-detail" id="moduleDetail">
+        <div id="moduleDetailEmpty" class="detail-empty">
+          <p>输入模块名查看详情</p>
+        </div>
+        <div id="moduleDetailContent" style="display:none;"></div>
+      </div>
+    </section>
+
+    <!-- ═══════════════ PANEL: BUILD ═══════════════ -->
+    <section class="panel" id="panelBuild" data-active="false">
+      <div class="panel-header">
+        <h2 class="panel-title">固件编译</h2>
+      </div>
+
+      <div class="build-form">
+        <div class="form-row">
+          <div class="form-group flex-grow">
+            <label>模块名</label>
+            <input type="text" id="buildModuleName" class="input" placeholder="如 qmi_wwan" />
+          </div>
+          <div class="form-group">
+            <label>BSP 版本</label>
+            <select id="buildBspVersion" class="select"></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group flex-grow">
+            <label>CONFIG 后缀 (可选)</label>
+            <input type="text" id="buildConfigSuffix" class="input" placeholder="如 IP_NF_RAW (可选，自动检测)" />
+          </div>
+          <div class="form-group">
+            <label>种子配置 (可选)</label>
+            <select id="buildSeedConfig" class="select">
+              <option value="">自动选择</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" onclick="startBuild()">开始编译</button>
+          <button class="btn btn-ghost" onclick="openQueryInBuild()">从查询区导入</button>
+        </div>
+      </div>
+
+      <div class="build-output" id="buildOutput" style="display:none;">
+        <div class="build-output-header">
+          <span class="build-status-badge" id="buildStatusBadge">编译中</span>
+          <span class="build-meta" id="buildMeta"></span>
+          <button class="icon-btn btn-sm" onclick="clearBuildOutput()" title="清空">✕</button>
+        </div>
+        <div class="terminal-output" id="buildTerminal"></div>
+      </div>
+
+      <div class="ko-list-section" id="koListSection" style="display:none;">
+        <h3 class="ko-list-title">已编译的 .ko 文件</h3>
+        <div class="ko-list" id="koList"></div>
+        <div class="ko-actions">
+          <button class="btn btn-success btn-sm" onclick="openPushModal()">推送至 Jetson</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════ PANEL: DEVICES ═══════════════ -->
+    <section class="panel" id="panelDevices" data-active="false">
+      <div class="panel-header">
+        <h2 class="panel-title">设备管理</h2>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">添加 / 编辑设备</span></div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group"><label>名称</label><input id="devName" class="input" placeholder="Orin-01" /></div>
+            <div class="form-group"><label>主机</label><input id="devHost" class="input" placeholder="192.168.1.10" /></div>
+            <div class="form-group"><label>端口</label><input id="devPort" class="input" type="number" value="22" /></div>
+            <div class="form-group"><label>用户名</label><input id="devUser" class="input" value="nvidia" /></div>
+            <div class="form-group flex-grow"><label>密钥路径 (可选)</label><input id="devKeyPath" class="input" placeholder="/home/seeed/.ssh/id_rsa" /></div>
+            <div class="form-group flex-grow"><label>备注</label><input id="devNote" class="input" placeholder="工位 A" /></div>
+          </div>
+          <div class="form-actions" style="margin-top:12px">
+            <input type="hidden" id="devEditId" value="" />
+            <button class="btn btn-primary" onclick="saveDevice()">保存设备</button>
+            <button class="btn btn-ghost" onclick="resetDeviceForm()">清空</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="devices-list" id="devicesList"></div>
+
+      <!-- Batch push -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">批量推送 .ko</span></div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group"><label>模块名</label><input id="batchModule" class="input" placeholder="qmi_wwan" /></div>
+            <div class="form-group"><label>密码 (仅本次)</label><input id="batchPassword" class="input" type="password" /></div>
+            <div class="form-group"><label>密钥路径 (可选)</label><input id="batchKeyPath" class="input" /></div>
+          </div>
+          <div class="form-actions">
+            <label class="checkbox-label"><input type="checkbox" id="batchTestLoad" checked /> 加载测试</label>
+            <button class="btn btn-success" onclick="startBatchPush()">推送至勾选设备</button>
+          </div>
+          <div class="push-progress" id="batchProgress" style="display:none;">
+            <div class="progress-log" id="batchProgressLog"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Jobs history -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">最近作业</span>
+          <button class="btn btn-ghost btn-sm" onclick="loadJobs()">刷新</button>
+        </div>
+        <div class="card-body"><div id="jobsList" class="jobs-list">加载中...</div></div>
+      </div>
+    </section>
+
+    <!-- ═══════════════ PANEL: CONFIGS ═══════════════ -->
+    <section class="panel" id="panelConfigs" data-active="false">
+      <div class="panel-header">
+        <h2 class="panel-title">.config 编辑</h2>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">构建配置</span></div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group flex-grow">
+              <label>构建配置</label>
+              <select id="cfgSelect" class="select" onchange="onCfgSelect()"></select>
+            </div>
+            <div class="form-group flex-grow">
+              <label>CONFIG 名</label>
+              <input id="cfgName" class="input" placeholder="如 USB_SERIAL_PL2303 (可带 CONFIG_ 前缀)" />
+            </div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" onclick="readConfigKey()">读取</button>
+          </div>
+          <div id="cfgStatus" style="margin-top:12px; display:none;">
+            <div class="info-label">当前值</div>
+            <div id="cfgCurrent" class="info-value" style="font-size:14px"></div>
+            <div class="form-actions" style="margin-top:10px">
+              <button class="btn btn-sm btn-build" onclick="setConfigKey('y')">=y</button>
+              <button class="btn btn-sm btn-build" onclick="setConfigKey('m')">=m</button>
+              <button class="btn btn-sm btn-build" onclick="setConfigKey('n')">=n</button>
+            </div>
+            <div id="cfgSaveResult" style="margin-top:10px"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">说明</span></div>
+        <div class="card-body" style="color:var(--text-secondary); font-size:13px">
+          改动直接写入所选 <code>Build/&lt;BSP&gt;-&lt;suffix&gt;/.config</code> 并重跑
+          <code>olddefconfig</code> 解析依赖。之后在"固件编译"页选择同一份种子配置即可用新开关重建模块。
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════ PANEL: SSH ═══════════════ -->
+    <section class="panel" id="panelSSH" data-active="false">
+      <div class="panel-header">
+        <h2 class="panel-title">SSH 终端</h2>
+        <div class="connection-bar" id="connectionBar">
+          <div class="conn-fields">
+            <select id="sshDevice" class="input-sm" onchange="onSshDeviceSelect()">
+              <option value="">手动输入…</option>
+            </select>
+            <input type="text" id="sshHost" class="input-sm" placeholder="主机 (如 192.168.1.10)" />
+            <input type="number" id="sshPort" class="input-sm port-input" value="22" min="1" max="65535" />
+            <input type="text" id="sshUser" class="input-sm" placeholder="用户名" value="nvidia" />
+            <input type="password" id="sshPassword" class="input-sm" placeholder="密码 (可选)" />
+            <input type="text" id="sshKeyPath" class="input-sm" placeholder="密钥路径 (可选)" />
+          </div>
+          <div class="conn-actions">
+            <button class="btn btn-primary btn-sm" onclick="testConnection()">测试连接</button>
+            <button class="btn btn-success btn-sm" onclick="openSshSession()" id="btnSshConnect">连接</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="conn-status-card" id="connStatusCard" style="display:none;">
+        <div class="conn-status-row">
+          <span class="conn-indicator online" id="connIndicator"></span>
+          <span class="conn-kernel" id="connKernelVersion"></span>
+          <span class="conn-os" id="connOsVersion"></span>
+        </div>
+        <div class="conn-loaded" id="connLoadedModules"></div>
+        <button class="btn btn-ghost btn-sm" onclick="disconnectSsh()">断开</button>
+      </div>
+
+      <div class="terminal-container" id="terminalContainer">
+        <div class="terminal-placeholder" id="terminalPlaceholder">
+          <p>连接到 Jetson 设备后即可使用终端</p>
+          <button class="btn btn-sm btn-ghost" onclick="openSshSession()">快速连接</button>
+        </div>
+        <div id="xtermContainer" style="display:none; width:100%; height:100%;"></div>
+      </div>
+    </section>
+
+    <!-- ═══════════════ PANEL: THOR BUILD ═══════════════ -->
+    <section class="panel" id="panelThor" data-active="false">
+      <div class="panel-header">
+        <h2 class="panel-title">Thor 固件编译/烧录</h2>
+        <div class="recovery-status" id="thorRecoveryStatus">
+          <span class="indicator offline" id="thorRecoveryIndicator"></span>
+          <span id="thorRecoveryText">检查 Recovery...</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">BSP 配置</span></div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>BSP 版本</label>
+              <select id="thorBspVersion" class="select">
+                <option value="R38.4.0">JetPack 7.1 (R38.4.0)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>目标板</label>
+              <input type="text" id="thorTargetBoard" class="input" value="jetson-agx-thor-devkit" readonly />
+            </div>
+            <div class="form-group">
+              <label>BOARD ID</label>
+              <input type="text" id="thorBoardId" class="input" value="3834" />
+            </div>
+            <div class="form-group">
+              <label>BOARD SKU</label>
+              <input type="text" id="thorBoardSku" class="input" value="0008" />
+            </div>
+            <div class="form-group">
+              <label>FAB</label>
+              <input type="text" id="thorFab" class="input" value="400" />
+            </div>
+            <div class="form-group">
+              <label>BOARD REV</label>
+              <input type="text" id="thorBoardRev" class="input" value="G.5" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">用户配置 (烧录后)</span></div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>默认用户名</label>
+              <input type="text" id="thorDefaultUser" class="input" value="seeed" />
+            </div>
+            <div class="form-group">
+              <label>默认密码</label>
+              <input type="password" id="thorDefaultPass" class="input" value="seeed" />
+            </div>
+            <div class="form-group">
+              <label>主机名</label>
+              <input type="text" id="thorHostname" class="input" value="jetson" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">编译流程</span></div>
+        <div class="card-body">
+          <div class="workflow-steps" id="thorWorkflowSteps">
+            <div class="workflow-step" data-step="prepare">
+              <span class="step-num">1</span>
+              <span class="step-name">Prepare</span>
+              <span class="step-desc">下载 rootfs + apply_binaries</span>
+              <button class="btn btn-sm btn-ghost" onclick="thorRunStage('prepare')">执行</button>
+            </div>
+            <div class="workflow-step" data-step="build">
+              <span class="step-num">2</span>
+              <span class="step-name">Build</span>
+              <span class="step-desc">编译内核 + 更新 initrd</span>
+              <button class="btn btn-sm btn-ghost" onclick="thorRunStage('build')">执行</button>
+            </div>
+            <div class="workflow-step" data-step="flash">
+              <span class="step-num">3</span>
+              <span class="step-name">Flash</span>
+              <span class="step-desc">烧录固件 (需 Recovery 模式)</span>
+              <button class="btn btn-sm btn-ghost" onclick="thorRunStage('flash')">执行</button>
+            </div>
+            <div class="workflow-step" data-step="all">
+              <span class="step-num">⚡</span>
+              <span class="step-name">一键全流程</span>
+              <span class="step-desc">prepare → build → flash</span>
+              <button class="btn btn-sm btn-primary" onclick="thorRunStage('all')">执行</button>
+            </div>
+          </div>
+          <div class="form-actions" style="margin-top:12px">
+            <button class="btn btn-ghost" onclick="thorCleanup()">清理产物</button>
+            <button class="btn btn-ghost" onclick="thorCheckRecovery()">检查 Recovery</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">编译日志</span></div>
+        <div class="card-body">
+          <div class="build-output" id="thorOutput">
+            <div class="terminal-output" id="thorTerminal"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════ PANEL: HYBRID BSP ═══════════════ -->
+    <section class="panel" id="panelHybrid" data-active="false">
+      <div class="panel-header">
+        <h2 class="panel-title">DIY Hybrid BSP</h2>
+        <div class="recovery-status" id="hybridRecoveryStatus">
+          <span class="indicator offline" id="hybridRecoveryIndicator"></span>
+          <span id="hybridRecoveryText">检查 Recovery...</span>
+        </div>
+      </div>
+
+      <div class="info-banner">
+        <p><strong>原理说明：</strong>Hybrid BSP = DevKit 备份 (APP) + 目标板 QSPI</p>
+        <p>保留 DevKit 完整用户环境，同时适配 reComputer 硬件</p>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">BSP 配置</span></div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>BSP 版本</label>
+              <select id="hybridBspVersion" class="select">
+                <option value="R36.4.3">JetPack 6.2 (R36.4.3)</option>
+                <option value="R36.4.4">JetPack 6.2.1 (R36.4.4)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>源设备 (备份来源)</label>
+              <input type="text" id="hybridSourceBoard" class="input" value="jetson-orin-nano-devkit-nvme" readonly />
+            </div>
+            <div class="form-group">
+              <label>目标设备</label>
+              <select id="hybridTargetBoard" class="select" onchange="hybridOnTargetChange()">
+                <option value="recomputer-orin-j401">reComputer Classic (J4011/J4012)</option>
+                <option value="recomputer-orin-super-j401">reComputer Super (J401)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>模块 SKU</label>
+              <input type="text" id="hybridModuleSku" class="input" value="0005" />
+            </div>
+            <div class="form-group">
+              <label>FAB</label>
+              <input type="text" id="hybridFab" class="input" value="300" />
+            </div>
+            <div class="form-group">
+              <label>BOARD REV</label>
+              <input type="text" id="hybridBoardRev" class="input" value="V.2" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Hybrid BSP 流程</span></div>
+        <div class="card-body">
+          <div class="hybrid-status-grid">
+            <div class="hybrid-status-item" id="hybridStep1">
+              <span class="status-icon">📦</span>
+              <span class="status-label">1. 备份 DevKit</span>
+              <span class="status-value" id="hybridBackupStatus">-</span>
+              <button class="btn btn-sm btn-ghost" onclick="hybridBackup()">执行</button>
+            </div>
+            <div class="hybrid-status-item" id="hybridStep2">
+              <span class="status-icon">🔧</span>
+              <span class="status-label">2. 准备 APP-only</span>
+              <span class="status-value" id="hybridAppStatus">-</span>
+              <button class="btn btn-sm btn-ghost" onclick="hybridPrepareApp()">执行</button>
+            </div>
+            <div class="hybrid-status-item" id="hybridStep3">
+              <span class="status-icon">⚡</span>
+              <span class="status-label">3. 生成 QSPI</span>
+              <span class="status-value" id="hybridQspiStatus">-</span>
+              <button class="btn btn-sm btn-ghost" onclick="hybridGenerateQspi()">执行</button>
+            </div>
+            <div class="hybrid-status-item" id="hybridStep4">
+              <span class="status-icon">📦</span>
+              <span class="status-label">4. 组装 mfi</span>
+              <span class="status-value" id="hybridAssembleStatus">-</span>
+              <button class="btn btn-sm btn-ghost" onclick="hybridAssemble()">执行</button>
+            </div>
+            <div class="hybrid-status-item" id="hybridStep5">
+              <span class="status-icon">🔥</span>
+              <span class="status-label">5. 烧录目标板</span>
+              <span class="status-value" id="hybridFlashStatus">-</span>
+              <button class="btn btn-sm btn-ghost" onclick="hybridFlash()">执行</button>
+            </div>
+          </div>
+          <div class="form-actions" style="margin-top:12px">
+            <button class="btn btn-ghost" onclick="hybridCheckRecovery()">检查 Recovery</button>
+            <button class="btn btn-primary" onclick="hybridRefreshStatus()">刷新状态</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">编译日志</span></div>
+        <div class="card-body">
+          <div class="build-output" id="hybridOutput">
+            <div class="terminal-output" id="hybridTerminal"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  
+    <!-- ═══════════════ PANEL: FIRMWARE ═══════════════ -->
+    <section class="panel" id="panelFirmware" data-active="false">
+      <div class="panel-header">
+        <h2 class="panel-title">NAS 固件同步</h2>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">配置</span></div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group"><label>NAS 主机</label><input id="fwNasHost" class="input" /></div>
+            <div class="form-group"><label>共享</label><input id="fwNasShare" class="input" /></div>
+            <div class="form-group"><label>用户名</label><input id="fwNasUser" class="input" /></div>
+            <div class="form-group"><label>密码</label><input id="fwNasPass" class="input" type="password" /></div>
+            <div class="form-group flex-grow"><label>目录</label><input id="fwNasSubdir" class="input" /></div>
+            <div class="form-group"><label>OneDrive 远程</label><input id="fwOnedriveRemote" class="input" /></div>
+            <div class="form-group flex-grow"><label>OneDrive 路径</label><input id="fwOnedrivePath" class="input" /></div>
+            <div class="form-group flex-grow"><label>匹配模式</label><input id="fwPatterns" class="input" /></div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" onclick="saveFirmwareConfig()">保存配置</button>
+            <button class="btn btn-ghost" onclick="testNasConnection()">测试连接</button>
+            <button class="btn btn-success" onclick="scanFirmware()">扫描新固件</button>
+            <button class="btn btn-warning" onclick="uploadAllFirmware()">上传全部待传</button>
+          </div>
+          <div id="fwConfigStatus" style="margin-top:10px; color:var(--text-secondary)"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">待上传固件</span><button class="btn btn-ghost btn-sm" onclick="loadFirmwarePending()">刷新</button></div>
+        <div class="card-body"><div id="fwPendingList" class="jobs-list">加载中...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">已上传记录</span><button class="btn btn-ghost btn-sm" onclick="loadFirmwareStatus()">刷新</button></div>
+        <div class="card-body"><div id="fwStatusList" class="jobs-list">加载中...</div></div>
+      </div>
+      <div class="card" id="fwLogCard" style="display:none;">
+        <div class="card-header"><span class="card-title">上传日志</span></div>
+        <div class="card-body"><pre id="fwLog" style="white-space:pre-wrap; max-height:300px; overflow:auto;"></pre></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     MODALS
+══════════════════════════════════════════════════════════════════ -->
+
+<!-- Download Modal -->
+<div class="modal-overlay" id="downloadModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>下载 BSP 源码</h3>
+      <button class="icon-btn" onclick="closeModal('downloadModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>BSP 版本</label>
+        <select id="dlVersion" class="select"><option value="">加载中...</option></select>
+      </div>
+      <div class="form-group">
+        <label><input type="checkbox" id="dlInit" checked /> 同时初始化并解压内核源码</label>
+      </div>
+      <div class="download-progress" id="dlProgress" style="display:none;">
+        <div class="progress-bar"><div class="progress-fill"></div></div>
+        <div class="progress-log" id="dlProgressLog"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('downloadModal')">取消</button>
+      <button class="btn btn-primary" onclick="startDownload()" id="dlStartBtn">开始下载</button>
+    </div>
+  </div>
+</div>
+
+<!-- Push Modal -->
+<div class="modal-overlay" id="pushModal" style="display:none;">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>推送 .ko 到 Jetson</h3>
+      <button class="icon-btn" onclick="closeModal('pushModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group"><label>模块名</label><input type="text" id="pushModule" class="input" readonly /></div>
+      <div class="form-group">
+        <label>目标设备</label>
+        <select id="pushDevice" class="select" onchange="onPushDeviceSelect()">
+          <option value="">手动输入…</option>
+        </select>
+      </div>
+      <div class="form-group"><label>主机</label><input type="text" id="pushHost" class="input" placeholder="192.168.1.10" /></div>
+      <div class="form-row">
+        <div class="form-group"><label>端口</label><input type="number" id="pushPort" class="input" value="22" /></div>
+        <div class="form-group flex-grow"><label>用户名</label><input type="text" id="pushUser" class="input" value="nvidia" /></div>
+      </div>
+      <div class="form-group"><label>密钥路径 (可选)</label><input type="text" id="pushKeyPath" class="input" /></div>
+      <div class="form-group"><label>密码 (留空使用密钥)</label><input type="password" id="pushPassword" class="input" /></div>
+      <div class="form-group"><label><input type="checkbox" id="pushTestLoad" checked /> 加载测试 (modprobe + dmesg)</label></div>
+      <div class="push-progress" id="pushProgress" style="display:none;">
+        <div class="progress-log" id="pushProgressLog"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('pushModal')">取消</button>
+      <button class="btn btn-success" onclick="startPush()" id="pushStartBtn">推送并测试</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

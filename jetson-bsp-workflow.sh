@@ -547,11 +547,12 @@ cmd_build() {
     # 调用原有的编译脚本（传递 CONFIG 名）
     if [[ -x "${SCRIPT_DIR}/build-jetson-module.sh" ]]; then
         local config_suffix=""
-        # 对于复杂驱动，使用 module 名作为 config_suffix（让 known_modules 解析）
+        # 已知复杂驱动走 known_modules (留空让 build-jetson-module.sh 自动解析)
+        local wifi_complex="iwlmvm|iwldvm|rtw89_8852be|rtw89_8852ce|rtw89_core|rtw89_pci"
         if [[ -n "${requested_config}" ]]; then
             config_suffix="${requested_config#CONFIG_}"
-        elif [[ "${module}" == "rtw89" || "${module}" == "iwlwifi" ]]; then
-            # 留空，交给 build-jetson-module.sh 的已知驱动栈逻辑。
+        elif [[ "${module}" == "iwlwifi" || "${module}" == "rtw89" || "${module}" =~ ^(${wifi_complex})$ ]]; then
+            # 留空，交给 build-jetson-module.sh 的已知驱动栈逻辑
             config_suffix=""
         elif [[ -n "${config_name}" ]]; then
             config_suffix="${config_name#CONFIG_}"

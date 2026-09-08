@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jetson BSP 编译工作流</title>
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --bg-hover: #334155;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --accent-blue: #3b82f6;
+            --accent-green: #22c55e;
+            --accent-yellow: #eab308;
+            --accent-red: #ef4444;
+            --accent-purple: #a855f7;
+            --border: #334155;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            padding: 3rem 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 3rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid var(--border);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .card-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+
+        .card-icon.intel { background: linear-gradient(135deg, #0068b5, #00a3e0); }
+        .card-icon.realtek { background: linear-gradient(135deg, #c51a1a, #ff6b6b); }
+        .card-icon.usb { background: linear-gradient(135deg, #f97316, #fbbf24); }
+        .card-icon.info { background: linear-gradient(135deg, #3b82f6, #8b5cf6); }
+
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .card-subtitle {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .chip {
+            display:-badge;
+            background: var(--bg-hover);
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            margin-right: 0.5rem;
+            margin-bottom: 0.5rem;
+            display: inline-block;
+        }
+
+        .chip.success { background: rgba(34, 197, 94, 0.2); color: var(--accent-green); }
+        .chip.warning { background: rgba(234, 179, 8, 0.2); color: var(--accent-yellow); }
+        .chip.error { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
+
+        .command-box {
+            background: #0d1117;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+            font-family: 'SF Mono', Monaco, Consolas, monospace;
+            font-size: 0.875rem;
+            overflow-x: auto;
+        }
+
+        .command-box code {
+            color: #e6edf3;
+        }
+
+        .command-comment { color: #8b949e; }
+        .command-cmd { color: #79c0ff; }
+        .command-var { color: #ffa657; }
+
+        h2 {
+            font-size: 1.5rem;
+            margin: 2rem 0 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .status-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--bg-card);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .status-table th,
+        .status-table td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .status-table th {
+            background: var(--bg-hover);
+            font-weight: 600;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .status-badge.success { background: rgba(34, 197, 94, 0.2); color: var(--accent-green); }
+        .status-badge.warning { background: rgba(234, 179, 8, 0.2); color: var(--accent-yellow); }
+        .status-badge.error { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .status-dot.success { background: var(--accent-green); }
+        .status-dot.warning { background: var(--accent-yellow); }
+        .status-dot.error { background: var(--accent-red); }
+
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-secondary);
+            border-top: 1px solid var(--border);
+            margin-top: 3rem;
+        }
+
+        a {
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            h1 {
+                font-size: 1.75rem;
+            }
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Jetson BSP 模块编译</h1>
+            <p class="subtitle">NVIDIA Jetson Linux BSP 内核模块交叉编译工具</p>
+        </header>
+
+        <section>
+            <h2>支持状态</h2>
+            <table class="status-table">
+                <thead>
+                    <tr>
+                        <th>芯片/模块</th>
+                        <th>驱动</th>
+                        <th>CONFIG</th>
+                        <th>状态</th>
+                        <th>说明</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Intel AX210 / AX200</strong></td>
+                        <td>iwlwifi</td>
+                        <td><code>CONFIG_IWLWIFI</code></td>
+                        <td><span class="status-badge success"><span class="status-dot success"></span> 支持</span></td>
+                        <td>Wi-Fi 主模块</td>
+                    </tr>
+                    <tr>
+                        <td>Intel AX210 / AX200 (MVM)</td>
+                        <td>iwlmvm</td>
+                        <td><code>CONFIG_IWLMVM</code></td>
+                        <td><span class="status-badge success"><span class="status-dot success"></span> 支持</span></td>
+                        <td>需要先编译 iwlwifi</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Realtek RTL8852AE</strong></td>
+                        <td>rtw89</td>
+                        <td><code>CONFIG_RTW89</code></td>
+                        <td><span class="status-badge success"><span class="status-dot success"></span> 支持</span></td>
+                        <td>Wi-Fi 6 (802.11ax)</td>
+                    </tr>
+                    <tr>
+                        <td>Realtek RTL8852BE</td>
+                        <td>rtw89</td>
+                        <td>-</td>
+                        <td><span class="status-badge warning"><span class="status-dot warning"></span> 内核无支持</span></td>
+                        <td>需下载 Realtek 独立驱动</td>
+                    </tr>
+                    <tr>
+                        <td>USB Wi-Fi 88x2bu</td>
+                        <td>88x2bu</td>
+                        <td>外部驱动</td>
+                        <td><span class="status-badge warning"><span class="status-dot warning"></span> 需单独安装</span></td>
+                        <td>见 GitHub 仓库</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section>
+            <h2>快速开始</h2>
+            <div class="grid">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon intel">Wi-Fi</div>
+                        <div>
+                            <div class="card-title">Intel AX210</div>
+                            <div class="card-subtitle">iwlwifi + iwlmvm</div>
+                        </div>
+                    </div>
+                    <div>
+                        <span class="chip success">Intel Wi-Fi 6E</span>
+                        <span class="chip success">AX210/AX200</span>
+                    </div>
+                    <div class="command-box">
+                        <code class="command-comment"># 编译 iwlwifi 主模块</code><br>
+                        <code class="command-cmd">./jetson-bsp-workflow.sh build iwlwifi</code><br><br>
+                        <code class="command-comment"># 编译 iwlmvm (MVM 驱动)</code><br>
+                        <code class="command-cmd">./jetson-bsp-workflow.sh build iwlmvm</code><br><br>
+                        <code class="command-comment"># 推送到 Jetson</code><br>
+                        <code class="command-var">JETSON_HOST</code>=user@ip <code class="command-cmd">./jetson-bsp-workflow.sh push iwlwifi</code>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon realtek">Wi-Fi</div>
+                        <div>
+                            <div class="card-title">Realtek RTL8852AE</div>
+                            <div class="card-subtitle">rtw89 驱动栈</div>
+                        </div>
+                    </div>
+                    <div>
+                        <span class="chip success">Wi-Fi 6</span>
+                        <span class="chip success">RTL8852AE</span>
+                    </div>
+                    <div class="command-box">
+                        <code class="command-comment"># 查询模块信息</code><br>
+                        <code class="command-cmd">./jetson-bsp-workflow.sh query rtw89</code><br><br>
+                        <code class="command-comment"># 编译 rtw89 (自动启用 CONFIG)</code><br>
+                        <code class="command-cmd">./jetson-bsp-workflow.sh build rtw89</code><br><br>
+                        <code class="command-comment"># 推送到 Jetson</code><br>
+                        <code class="command-var">JETSON_HOST</code>=user@ip <code class="command-cmd">./jetson-bsp-workflow.sh push rtw89</code>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon usb">USB</div>
+                        <div>
+                            <div class="card-title">USB Wi-Fi 适配器</div>
+                            <div class="card-subtitle">88x2bu 等</div>
+                        </div>
+                    </div>
+                    <div>
+                        <span class="chip warning">外部驱动</span>
+                        <span class="chip">需要单独下载</span>
+                    </div>
+                    <div class="command-box">
+                        <code class="command-comment"># 查看 GitHub 仓库</code><br>
+                        <code class="command-cmd"># https://github.com/Seeed-Projects/Seeed-Jetson-DevelopTool/tree/main/skills/codex/usb-wifi-88x2bu-setup</code><br><br>
+                        <code class="command-comment"># 内核已内置</code><br>
+                        <code class="command-cmd">modprobe 88x2bu</code>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-icon info">信息</div>
+                        <div>
+                            <div class="card-title">常用模块</div>
+                            <div class="card-subtitle">开箱即用</div>
+                        </div>
+                    </div>
+                    <div>
+                        <span class="chip success">qmi_wwan</span>
+                        <span class="chip success">pl2303</span>
+                        <span class="chip success">ftdi_sio</span>
+                        <span class="chip success">cdc_wdm</span>
+                    </div>
+                    <div class="command-box">
+                        <code class="command-comment"># 直接编译，无需指定 CONFIG</code><br>
+                        <code class="command-cmd">./jetson-bsp-workflow.sh build qmi_wwan</code><br><br>
+                        <code class="command-cmd">./jetson-bsp-workflow.sh build pl2303</code><br><br>
+                        <code class="command-cmd">./jetson-bsp-workflow.sh build ftdi_sio</code>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section>
+            <h2>完整命令参考</h2>
+            <div class="card">
+                <div class="command-box" style="font-size: 0.8rem;">
+                    <code class="command-comment"># 初始化 BSP 环境</code><br>
+                    <code class="command-cmd">./jetson-bsp-workflow.sh init</code><br><br>
+
+                    <code class="command-comment"># 下载 BSP 源码</code><br>
+                    <code class="command-cmd">./jetson-bsp-workflow.sh download R36.4.4</code><br><br>
+
+                    <code class="command-comment"># 查询模块 (源码位置、CONFIG、依赖)</code><br>
+                    <code class="command-cmd">./jetson-bsp-workflow.sh query &lt;module&gt;</code><br><br>
+
+                    <code class="command-comment"># 编译模块 (自动检测并启用 CONFIG)</code><br>
+                    <code class="command-cmd">./jetson-bsp-workflow.sh build &lt;module&gt;</code><br><br>
+
+                    <code class="command-comment"># 推送到 Jetson 并加载</code><br>
+                    <code class="command-var">JETSON_HOST</code>=user@jetson.local <code class="command-cmd">./jetson-bsp-workflow.sh push &lt;module&gt;</code><br><br>
+
+                    <code class="command-comment"># 一键编译 + 推送</code><br>
+                    <code class="command-var">JETSON_HOST</code>=user@jetson.local <code class="command-cmd">./jetson-bsp-workflow.sh deploy &lt;module&gt;</code><br><br>
+
+                    <code class="command-comment"># 查看帮助</code><br>
+                    <code class="command-cmd">./jetson-bsp-workflow.sh help</code>
+                </div>
+            </div>
+        </section>
+
+        <section>
+            <h2>工作流说明</h2>
+            <div class="card">
+                <p style="margin-bottom: 1rem; color: var(--text-secondary);">
+                    <strong>自动配置流程：</strong>
+                </p>
+                <ol style="margin-left: 1.5rem; color: var(--text-secondary);">
+                    <li style="margin-bottom: 0.5rem;">检测模块对应的 CONFIG 名称</li>
+                    <li style="margin-bottom: 0.5rem;">如果是 menuconfig 类型 (rtw89, iwlwifi)，自动启用父级和子模块</li>
+                    <li style="margin-bottom: 0.5rem;">复制基础 .config 到 Build 目录</li>
+                    <li style="margin-bottom: 0.5rem;">使用 <code>scripts/config</code> 启用目标 CONFIG</li>
+                    <li style="margin-bottom: 0.5rem;">执行 <code>make olddefconfig</code> 展开依赖</li>
+                    <li style="margin-bottom: 0.5rem;">编译目标模块及其依赖</li>
+                    <li>可选：scp 到 Jetson + modprobe 验证</li>
+                </ol>
+            </div>
+        </section>
+
+        <footer>
+            <p>Jetson BSP 工作流工具 | NVIDIA Jetson Linux R36.4.4</p>
+            <p style="margin-top: 0.5rem; font-size: 0.875rem;">
+                <a href="https://developer.nvidia.com/embedded/jetson-linux">NVIDIA Jetson Linux</a> |
+                <a href="https://github.com/Seeed-Projects/Seeed-Jetson-DevelopTool">Seeed Jetson DevelopTool</a>
+            </p>
+        </footer>
+    </div>
+</body>
+</html>

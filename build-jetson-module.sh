@@ -51,6 +51,7 @@ fi
 JETSON_HOST="${JETSON_HOST:-}"
 JETSON_KDIR="${JETSON_KDIR:-}"   # 留空 -> 在 Jetson 上 uname -r 决定
 JETSON_SKIP_DEPMOD="${JETSON_SKIP_DEPMOD:-}"
+JETSON_CONFIG_SEED="${JETSON_CONFIG_SEED:-}"   # 可选: 复用指定 .config 作种子
 
 # ========== 路径 ==========
 workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -358,41 +359,48 @@ EOF
 known_modules() {
     case "$1" in
         qmi_wwan)
-            echo "qmi_wwan|CONFIG_USB_NET_QMI_WWAN|"
+            echo "qmi_wwan|CONFIG_USB_NET_QMI_WWAN||"
             ;;
         pl2303)
-            echo "pl2303|CONFIG_USB_SERIAL_PL2303|drivers/usb/serial/usbserial.ko"
+            echo "pl2303|CONFIG_USB_SERIAL_PL2303||drivers/usb/serial/usbserial.ko"
             ;;
         ftdi_sio)
-            echo "ftdi_sio|CONFIG_USB_SERIAL_FTDI_SIO|drivers/usb/serial/usbserial.ko"
+            echo "ftdi_sio|CONFIG_USB_SERIAL_FTDI_SIO||drivers/usb/serial/usbserial.ko"
             ;;
         cdc_wdm)
-            echo "cdc_wdm|CONFIG_USB_WDM|"
+            echo "cdc_wdm|CONFIG_USB_WDM||"
             ;;
         iptable_raw)
-            echo "iptable_raw|CONFIG_IP_NF_RAW|net/ipv4/netfilter/ip_tables.ko net/netfilter/x_tables.ko"
+            echo "iptable_raw|CONFIG_IP_NF_RAW||net/ipv4/netfilter/ip_tables.ko net/netfilter/x_tables.ko"
             ;;
         ip_tables)
-            echo "ip_tables|CONFIG_IP_TABLES|"
+            echo "ip_tables|CONFIG_IP_TABLES||"
             ;;
         # Wi-Fi drivers - 用 menuconfig (RTW89, IWLWIFI) 启用
         iwlwifi)
-            echo "iwlwifi|CONFIG_IWLWIFI|"
+            echo "iwlwifi|CONFIG_IWLWIFI||"
             ;;
         iwlmvm)
-            echo "iwlmvm|CONFIG_IWLMVM|"
+            # IWLMVM 需要父级 IWLWIFI 启用
+            echo "iwlmvm|CONFIG_IWLMVM|CONFIG_IWLWIFI|"
             ;;
         iwldvm)
-            echo "iwldvm|CONFIG_IWLDVM|"
+            echo "iwldvm|CONFIG_IWLDVM|CONFIG_IWLWIFI|"
             ;;
         rtw89)
-            echo "rtw89|CONFIG_RTW89|"
+            echo "rtw89|CONFIG_RTW89||"
             ;;
         rtw89_core)
-            echo "rtw89_core|CONFIG_RTW89_CORE|"
+            echo "rtw89_core|CONFIG_RTW89_CORE|CONFIG_RTW89|"
             ;;
         rtw89_pci)
-            echo "rtw89_pci|CONFIG_RTW89_PCI|"
+            echo "rtw89_pci|CONFIG_RTW89_PCI|CONFIG_RTW89|"
+            ;;
+        rtw89_8852be)
+            echo "rtw89_8852be|CONFIG_RTW89_8852BE|CONFIG_RTW89|"
+            ;;
+        rtw89_8852ce)
+            echo "rtw89_8852ce|CONFIG_RTW89_8852CE|CONFIG_RTW89|"
             ;;
         *)
             return 1
@@ -452,9 +460,16 @@ EOF
         # 试试已知别名
         local alias
         if alias=$(known_modules "${MODULE_NAME}"); then
-            local _mod _alias_cfg _alias_deps
-            IFS='|' read -r _mod _alias_cfg _alias_deps <<<"${alias}"
+            local _mod _alias_cfg _alias_parent _alias_deps
+            # 格式: module|CONFIG|PARENT|DEPS (4字段)
+            IFS='|' read -r _mod _alias_cfg _alias_parent _alias_deps <<<"${alias}"
             CONFIG_NAME="${_alias_cfg}"
+            # 如果有父级依赖, 先启用父级 (父级不加入 EXTRA_DEPS)
+            if [[ -n "${_alias_parent}" && "${_alias_parent}" != "${CONFIG_NAME}" ]]; then
+                echo "${_alias_parent}" > "${build_root}/.${MODULE_NAME}.parent"
+                ok "检测到父级依赖: ${_alias_parent} (将在配置阶段启用)"
+            fi
+            # EXTRA_DEPS 只接收第4字段，不包含父级
             if [[ -z "${EXTRA_DEPS}" && -n "${_alias_deps}" ]]; then
                 EXTRA_DEPS="${_alias_deps}"
                 ok "应用已知模块默认 deps: ${EXTRA_DEPS}"
@@ -477,9 +492,13 @@ EOF
     if [[ -z "${EXTRA_DEPS}" ]]; then
         local known_alias
         if known_alias=$(known_modules "${MODULE_NAME}"); then
-            local _known_mod _known_cfg _known_deps
-            IFS='|' read -r _known_mod _known_cfg _known_deps <<<"${known_alias}"
-            if [[ -n "${_known_deps}" ]]; then
+            local _known_mod _known_cfg _known_parent _known_deps
+            IFS='|' read -r _known_mod _known_cfg _known_parent _known_deps <<<"${known_alias}"
+            if [[ -n "${_known_parent}" && "${_known_parent}" != "${CONFIG_NAME}" ]]; then
+                echo "${_known_parent}" > "${build_root}/.${MODULE_NAME}.parent"
+                ok "检测到父级依赖: ${_known_parent} (将在配置阶段启用)"
+            fi
+            if [[ -z "${EXTRA_DEPS}" && -n "${_known_deps}" ]]; then
                 EXTRA_DEPS="${_known_deps}"
                 ok "应用已知模块默认 deps: ${EXTRA_DEPS}"
             fi
@@ -509,6 +528,9 @@ EOF
     section "配置内核"
     if [[ -f "${build_dir}/.config" ]]; then
         ok "复用已有 .config: ${build_dir}/.config"
+    elif [[ -n "${JETSON_CONFIG_SEED}" && -f "${JETSON_CONFIG_SEED}" ]]; then
+        cp "${JETSON_CONFIG_SEED}" "${build_dir}/.config"
+        ok "从种子 .config 复制为起点: ${JETSON_CONFIG_SEED}"
     else
         # 用同 BSP 版本下任意已编模块的 .config 作为种子, 保证 vermagic 一致
         local seed_config=""
@@ -527,6 +549,19 @@ EOF
         fi
         "${kernel_source}/scripts/config" --file "${build_dir}/.config" \
             --set-str LOCALVERSION "-tegra"
+    fi
+
+    # 5b. 如果有父级依赖文件，启用父级
+    local parent_file="${build_root}/.${MODULE_NAME}.parent"
+    if [[ -f "${parent_file}" ]]; then
+        local parent_cfg
+        parent_cfg=$(cat "${parent_file}")
+        if [[ -n "${parent_cfg}" ]]; then
+            "${kernel_source}/scripts/config" --file "${build_dir}/.config" \
+                --module "${parent_cfg}" 2>/dev/null
+            ok "已启用父级: ${parent_cfg}"
+        fi
+        rm -f "${parent_file}"
     fi
 
     # 6. 启用目标 CONFIG
@@ -576,6 +611,21 @@ EOF
     else
         ok "${CONFIG_NAME} 已在 .config (保持现有值)"
     fi
+
+    # 6c. 同步启用目标 CONFIG 的 depends 链，防止 olddefconfig 清掉目标
+    #     (例: qmi_wwan depends on USB_NET_DRIVERS/USB, defconfig 默认 n)
+    local dep_configs
+    while IFS= read -r dep_cfg; do
+        [[ -z "${dep_cfg}" ]] && continue
+        local dep_state
+        dep_state=$(grep -E "^${dep_cfg}=|^# ${dep_cfg} is not set" "${build_dir}/.config" | head -1)
+        case "${dep_state}" in
+            "${dep_cfg}=y"|"${dep_cfg}=m") continue ;;  # 已满足
+        esac
+        dep_cfg="${dep_cfg#CONFIG_}"
+        "${kernel_source}/scripts/config" --file "${build_dir}/.config" --enable "${dep_cfg}"
+        ok "启用依赖: CONFIG_${dep_cfg}=y"
+    done < <(find_kconfig_depends "${CONFIG_NAME#CONFIG_}")
 
     # 复杂驱动需要功能模块；只启用总开关会生成不可用的半套驱动。
     local companion_configs=()

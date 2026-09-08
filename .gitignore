@@ -34,3 +34,8 @@ tools/
 *.swp
 *.swo
 
+
+# Web app runtime data / cache
+web/data/
+__pycache__/
+*.pyc
