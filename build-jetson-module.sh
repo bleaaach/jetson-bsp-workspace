@@ -151,6 +151,101 @@ find_kconfig_depends() {
     ' "${kconfig_file}")
 }
 
+# ========== 辅助：Kconfig 符号类型 (tristate/bool) ==========
+kconfig_type() {
+    local cfg="$1"
+    local kf
+    kf=$(cd "${kernel_source}" && grep -rlnE "^(menu)?config ${cfg}\b" --include="Kconfig*" 2>/dev/null | head -1)
+    [[ -z "${kf}" ]] && { echo "tristate"; return; }
+    local t
+    t=$(cd "${kernel_source}" && awk -v c="${cfg}" '
+        $0 ~ "^(menu)?config " c "[[:space:]]*$" {p=1; next}
+        p && /^(menu)?config / {exit}
+        p && /^[[:space:]]*(tristate|bool)\b/ {print $1; exit}
+    ' "${kf}")
+    [[ -z "${t}" ]] && echo "tristate" || echo "${t}"
+}
+
+# ========== 辅助：找包裹 config 的最近外层 menuconfig ==========
+find_parent_menuconfig() {
+    local cfg="$1"
+    local kf
+    kf=$(cd "${kernel_source}" && grep -rlnE "^(menu)?config ${cfg}\b" --include="Kconfig*" 2>/dev/null | head -1)
+    [[ -z "${kf}" ]] && return 1
+    local cfg_line indent
+    cfg_line=$(cd "${kernel_source}" && grep -nE "^(menu)?config ${cfg}\b" "${kf}" | head -1 | cut -d: -f1)
+    indent=$(cd "${kernel_source}" && sed -n "${cfg_line}p" "${kf}" | awk '{print index($0,$1)-1}')
+    local ln depth=0
+    for (( ln = cfg_line - 1; ln >= 1; ln-- )); do
+        local l
+        l=$(cd "${kernel_source}" && sed -n "${ln}p" "${kf}")
+        [[ -z "${l//[[:space:]]/}" ]] && continue
+        # 外层 menuconfig (缩进式嵌套)
+        if [[ "${l}" =~ ^([[:space:]]*)menuconfig[[:space:]]+([A-Z0-9_]+) ]]; then
+            local l_indent=${#BASH_REMATCH[1]}
+            if (( l_indent < indent )) && (( depth == 0 )); then
+                echo "${BASH_REMATCH[2]}"
+                return 0
+            fi
+            continue
+        fi
+        # if / endif 条件块 (顶格 config 常见, 如: if USB_SERIAL ... endif)
+        if [[ "${l}" =~ ^[[:space:]]*endif[[:space:]]*([#].*)?$ ]]; then
+            ((depth++))
+            continue
+        fi
+        if [[ "${l}" =~ ^[[:space:]]*if[[:space:]]+([A-Za-z0-9_]+)[[:space:]]*([#].*)?$ ]]; then
+            if (( depth == 0 )); then
+                echo "${BASH_REMATCH[1]}"
+                return 0
+            fi
+            ((depth--))
+            continue
+        fi
+    done
+    return 1
+}
+
+# ========== 辅助：启用 config 及其父 menuconfig 链 + depends 链 ==========
+# tristate → =m (模块), bool → =y; 避免把依赖编进 vmlinux 造成重复导出
+enable_cfg_tree() {
+    local start_cfg="${1#CONFIG_}"
+    local -a queue=("${start_cfg}")
+    declare -A seen_cfg=()
+    local scan_i=0
+    while (( scan_i < ${#queue[@]} )); do
+        local cur="${queue[${scan_i}]}"
+        ((scan_i++))
+        [[ -n "${seen_cfg[${cur}]:-}" ]] && continue
+        seen_cfg["${cur}"]=1
+
+        local cur_state
+        cur_state=$(grep -E "^CONFIG_${cur}=|^# CONFIG_${cur} is not set" "${build_dir}/.config" | head -1)
+        case "${cur_state}" in
+            CONFIG_${cur}=y|CONFIG_${cur}=m) ;;
+            *)
+                if [[ "$(kconfig_type "${cur}")" == "bool" ]]; then
+                    "${kernel_source}/scripts/config" --file "${build_dir}/.config" --enable "${cur}"
+                    ok "启用依赖: CONFIG_${cur}=y (bool)"
+                else
+                    "${kernel_source}/scripts/config" --file "${build_dir}/.config" --module "${cur}"
+                    ok "启用依赖: CONFIG_${cur}=m"
+                fi
+                ;;
+        esac
+
+        local parent
+        if parent=$(find_parent_menuconfig "${cur}") && [[ -z "${seen_cfg[${parent}]:-}" ]]; then
+            queue+=("${parent}")
+        fi
+        while IFS= read -r dep; do
+            [[ -z "${dep}" ]] && continue
+            dep="${dep#CONFIG_}"
+            [[ -z "${seen_cfg[${dep}]:-}" ]] && queue+=("${dep}")
+        done < <(find_kconfig_depends "${cur}")
+    done
+}
+
 # ========== 辅助：CONFIG 名 → 对应 .ko 路径 ==========
 config_to_module_path() {
     local config="$1"
@@ -612,20 +707,11 @@ EOF
         ok "${CONFIG_NAME} 已在 .config (保持现有值)"
     fi
 
-    # 6c. 同步启用目标 CONFIG 的 depends 链，防止 olddefconfig 清掉目标
-    #     (例: qmi_wwan depends on USB_NET_DRIVERS/USB, defconfig 默认 n)
-    local dep_configs
-    while IFS= read -r dep_cfg; do
-        [[ -z "${dep_cfg}" ]] && continue
-        local dep_state
-        dep_state=$(grep -E "^${dep_cfg}=|^# ${dep_cfg} is not set" "${build_dir}/.config" | head -1)
-        case "${dep_state}" in
-            "${dep_cfg}=y"|"${dep_cfg}=m") continue ;;  # 已满足
-        esac
-        dep_cfg="${dep_cfg#CONFIG_}"
-        "${kernel_source}/scripts/config" --file "${build_dir}/.config" --enable "${dep_cfg}"
-        ok "启用依赖: CONFIG_${dep_cfg}=y"
-    done < <(find_kconfig_depends "${CONFIG_NAME#CONFIG_}")
+    # 6c. 启用父级 menuconfig 链 + depends 链，防止 olddefconfig 清掉目标
+    #     (例: qmi_wwan depends on USB_NET_DRIVERS/USB;
+    #      pl2303/ftdi_sio 在 menuconfig USB_SERIAL 下, 隐式依赖父级)
+    #     tristate 依赖置 =m, bool 置 =y — 避免把依赖编进 vmlinux 重复导出
+    enable_cfg_tree "${CONFIG_NAME}"
 
     # 复杂驱动需要功能模块；只启用总开关会生成不可用的半套驱动。
     local companion_configs=()
@@ -719,6 +805,20 @@ EOF
 
     if [[ -n "${EXTRA_DEPS}" ]]; then
         for dep in ${EXTRA_DEPS}; do
+            # 依赖若已内建 (=y, defconfig 常见如 IP_NF_IPTABLES), 跳过模块化 —
+            # 否则把 vmlinux 已有符号重复导出, modpost 报 exported twice
+            local dep_base dep_cfg=""
+            dep_base=$(basename "${dep}" .ko)
+            while IFS= read -r _dline; do
+                if [[ "${_dline}" =~ obj-\$\(CONFIG_[A-Z0-9_]+\)[[:space:]]*\+=[[:space:]]*${dep_base}\.o ]]; then
+                    dep_cfg=$(grep -oE 'CONFIG_[A-Z0-9_]+' <<<"${_dline}" | head -1)
+                    break
+                fi
+            done < <(cd "${kernel_source}" && grep -rhF 'obj-$(CONFIG_' --include="Makefile" . 2>/dev/null)
+            if [[ -n "${dep_cfg}" ]] && grep -qE "^${dep_cfg}=y" "${build_dir}/.config" 2>/dev/null; then
+                ok "依赖已内建, 跳过模块化: ${dep} (${dep_cfg}=y)"
+                continue
+            fi
             ok "用户指定依赖: ${dep}"
             module_targets+=("${dep}")
         done
