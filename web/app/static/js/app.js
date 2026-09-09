@@ -549,6 +549,93 @@ function renderModuleDetail(d) {
   const cfg = d.config_status || {};
   const kos = d.compiled_kos || [];
 
+  // CONFIG 默认值徽章: Seeed BSP / NVIDIA 官方 / 实际构建
+  const defLabel = (v) => {
+    const map = {
+      y: {cls: "builtin", text: "=y 已内置"},
+      m: {cls: "module", text: "=m 可编译"},
+      n: {cls: "disabled", text: "=n 禁用"},
+      "not set": {cls: "disabled", text: "未启用"},
+      "": {cls: "unknown", text: "(defconfig 未显式)"},
+    };
+    const s = map[v] || {cls: "unknown", text: v || "?"};
+    return `<span class="status-badge ${s.cls}">${s.text}</span>`;
+  };
+  const bd = src.bsp_default || "";
+  const od = src.official_default || "";
+  const bv = src.build_value || "";
+  const rk = src.rootfs_ko || "";           // rootfs 部署的 .ko (硬标准)
+  const inTree = src.in_tree !== false;     // 内核树内是否有源码
+
+  // 配置块: 树里无源码时 config_name 为空, 自然隐藏
+  let bspDefaultHtml = "";
+  if (src.kconfig_name) {
+    bspDefaultHtml = `
+      <span class="info-label">Seeed BSP 配置</span>
+      <span class="info-value">${defLabel(bd)}</span>
+      <span class="info-label">NVIDIA 官方配置</span>
+      <span class="info-value">${defLabel(od)}</span>
+      ${bv ? `<span class="info-label">本机构建实际</span>
+      <span class="info-value">${defLabel(bv)}</span>` : ""}
+    `;
+  }
+
+  const ORIGIN_LABEL = {
+    "nvidia-official": {cls: "origin-nvidia", text: "NVIDIA 官方"},
+    "seeed-modified":  {cls: "origin-seeed", text: "Seeed 修改"},
+    "seeed-only":      {cls: "origin-seeed-only", text: "Seeed 独有"},
+    "unknown":         {cls: "origin-unknown", text: "未知"},
+  };
+
+  const srcFiles = src.files || [];
+  const origins = src.origins || {};
+
+  // 出处汇总徽章 (verdict 细节与模块卡片标题共用)
+  let originBadge = "";
+  if (srcFiles.length && origins) {
+    const kinds = srcFiles.map((f) => origins[f]).filter(Boolean);
+    if (kinds.every((k) => k === "nvidia-official")) {
+      originBadge = `<span class="status-badge builtin">NVIDIA 官方源码</span>`;
+    } else if (kinds.some((k) => k === "seeed-only")) {
+      originBadge = `<span class="status-badge seeed">含 Seeed 独有驱动</span>`;
+    } else if (kinds.some((k) => k === "seeed-modified")) {
+      originBadge = `<span class="status-badge seeed">Seeed 修改驱动</span>`;
+    }
+  }
+
+  // 四分支归属判定 (优先级: 事实 → 推断):
+  // 1. rootfs 有 .ko → BSP 固件已含
+  // 2. 内核树自带源码 → 可直接编译
+  // 3. 树无源码 + 有产物 → 外部源码/自建编译
+  // 4. 树无源码 + 无产物 → 需外部获取/自建
+  let verdictHtml = "";
+  if (rk) {
+    verdictHtml = `
+      <span class="info-label" style="color:var(--green)">✅ BSP 固件已含</span>
+      <span class="info-value" style="color:var(--green)">rootfs: ${rk}，设备直接可用</span>
+    `;
+  } else if (inTree) {
+    const cfgOn = bd === "y" || bd === "m" || od === "y" || od === "m";
+    verdictHtml = `
+      <span class="info-label" style="color:var(--blue)">🌲 内核树自带源码，可直接编译</span>
+      <span class="info-value" style="color:var(--blue)">${originBadge || "源码位于内核树内"}</span>
+      <span class="info-label">Seeed/NVIDIA 配置</span>
+      <span class="info-value">${defLabel(bd)} ${defLabel(od)} · 本机 ${kos.length} 个 .ko</span>
+      <span class="info-label">固件</span>
+      <span class="info-value">BSP 固件不含 .ko（rootfs 为空），需自行编译并安装${!cfgOn && src.kconfig_name ? `<span style="color:var(--yellow)">，但 defconfig 未开启，编译前需先开 ${src.kconfig_name}</span>` : ""}</span>
+    `;
+  } else if (kos.length) {
+    verdictHtml = `
+      <span class="info-label" style="color:var(--blue)">🛠️ 内核树无此驱动源码 → 外部源码/自建编译</span>
+      <span class="info-value" style="color:var(--blue)">本机已有 ${kos.length} 个 .ko（自建脚本产出，如 build-rtw89-8852be.sh）</span>
+    `;
+  } else {
+    verdictHtml = `
+      <span class="info-label" style="color:var(--yellow)">内核树无源码且无产物</span>
+      <span class="info-value" style="color:var(--yellow)">需外部获取源码或自建（如 ~/rtw89-src 之类外部目录）</span>
+    `;
+  }
+
   let statusBadge = "";
   if (cfg.value) {
     const map = {
@@ -561,8 +648,11 @@ function renderModuleDetail(d) {
     statusBadge = `<span class="status-badge ${s.cls}">${s.text}</span>`;
   }
 
-  const sourceHtml = src.files && src.files.length
-    ? src.files.map((f) => `<div class="file-path">${f}</div>`).join("")
+  const sourceHtml = srcFiles.length
+    ? srcFiles.map((f) => {
+        const og = ORIGIN_LABEL[origins[f]] || ORIGIN_LABEL["unknown"];
+        return `<div class="file-path"><span class="origin-badge ${og.cls}">${og.text}</span>${f}</div>`;
+      }).join("")
     : `<span style="color:var(--text-muted)">未找到源文件</span>`;
 
   const koHtml = kos.length
@@ -579,6 +669,7 @@ function renderModuleDetail(d) {
     <div class="card">
       <div class="card-header">
         <span class="card-title">📦 模块: ${d.module}</span>
+        ${originBadge}
         ${statusBadge}
       </div>
       <div class="card-body">
@@ -590,7 +681,8 @@ function renderModuleDetail(d) {
           ${cfg.raw_line ? `<span class="info-label">.config 行</span><span class="info-value" style="font-size:11px">${cfg.raw_line}</span>` : ""}
           <span class="info-label">结论</span>
           <span class="info-value">${d.summary}</span>
-        </div>
+          ${verdictHtml}
+      </div>
       </div>
     </div>
 
@@ -601,6 +693,7 @@ function renderModuleDetail(d) {
         <div class="info-grid">
           <span class="info-label">配置项</span>
           <span class="info-value" style="color:var(--accent)">${src.kconfig_name}</span>
+          ${bspDefaultHtml}
           ${src.kconfig_file ? `<span class="info-label">文件</span><span class="info-value">${src.kconfig_file}</span>` : ""}
           ${src.extra_configs && src.extra_configs.length ? `<span class="info-label">子配置</span><span class="info-value">${src.extra_configs.join(", ")}</span>` : ""}
         </div>

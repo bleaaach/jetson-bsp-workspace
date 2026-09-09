@@ -90,6 +90,26 @@
         </div>
       </div>
 
+      <details class="card" style="margin-top:12px">
+        <summary class="card-header" style="cursor:pointer;list-style:none">
+          <span class="card-title">🗂️ 工作区布局</span>
+        </summary>
+        <div class="card-body">
+          <div class="info-grid">
+            <span class="info-label">Source/&lt;版本&gt;/</span>
+            <span class="info-value">内核编译树（build-jetson-module.sh / Web 驱动编译用）</span>
+            <span class="info-label">Reference/&lt;版本&gt;/</span>
+            <span class="info-value">NVIDIA 官方基线（自动生成，用于"源码谁改的"对比）</span>
+            <span class="info-label">Linux_for_Tegra</span>
+            <span class="info-value">→ /home/seeed/Desktop/Linux_for_Tegra — Seeed BSP git 检出（刷机/apply_binaries 用，分支可切换）</span>
+            <span class="info-label">Build/&lt;版本&gt;-&lt;模块&gt;/</span>
+            <span class="info-value">编译产物（.ko）</span>
+            <span class="info-label">外部目录（如 ~/rtw89-src）</span>
+            <span class="info-value">内核树没有的驱动源码，走 out-of-tree 自建编译</span>
+          </div>
+        </div>
+      </details>
+
       <div class="search-results" id="searchResults" style="display:none;">
         <div class="results-header"><span id="resultsCount"></span></div>
         <div class="results-list" id="resultsList"></div>

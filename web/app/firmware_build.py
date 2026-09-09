@@ -209,6 +209,45 @@ def _check_lsusb(vendor_id: str) -> List[str]:
 # L4T Workspace Detection
 # =============================================================================
 
+_KERNEL_SRC_DIR_NAMES = ("kernel-noble", "kernel-jammy-src", "kernel_src", "kernel")
+
+
+def find_kernel_src_dir(l4t_root: Path) -> Optional[str]:
+    """探测 L4T 目录中实际存在的内核源码目录名 (kernel-noble / kernel-jammy-src / kernel_src / kernel)。
+
+    不同 L4T 分支的内核目录名不同: R39.x 用 kernel-noble, R36.x 及更早用
+    kernel-jammy-src (或 kernel_src)。按优先级探测, 返回第一个含 Makefile 的。
+    """
+    kernel_root = l4t_root / "source" / "kernel"
+    if not kernel_root.is_dir():
+        return None
+    for name in _KERNEL_SRC_DIR_NAMES:
+        if (kernel_root / name / "Makefile").is_file():
+            return name
+    return None
+
+
+def get_l4t_branch(l4t_root: Path) -> str:
+    """返回 L4T 目录当前检出的 git 分支名; 非 git 仓库或失败时返回空串"""
+    out, _, rc = _run_shell(f"git -C {l4t_root} rev-parse --abbrev-ref HEAD 2>/dev/null", timeout=5)
+    if rc != 0:
+        return ""
+    return out.strip().splitlines()[-1] if out.strip() else ""
+
+
+def _is_l4t_workspace(p: Path) -> bool:
+    """判断是否为完整的 Linux_for_Tegra 工作目录 (跨分支)。
+
+    - R39.x 分支: 根目录有 apply_binaries.sh
+    - R36.x 及更早分支: 无 apply_binaries.sh, 但有 source/ 与 bootloader/
+    """
+    if not p.exists():
+        return False
+    if (p / "apply_binaries.sh").is_file():
+        return True
+    return (p / "source").is_dir() and (p / "bootloader").is_dir()
+
+
 def find_l4t_workspace() -> Optional[Path]:
     """查找 Linux_for_Tegra 工作目录"""
     candidates = [
@@ -218,7 +257,7 @@ def find_l4t_workspace() -> Optional[Path]:
         SOURCE_DIR / "Linux_for_Tegra",
     ]
     for p in candidates:
-        if p.exists() and (p / "apply_binaries.sh").exists():
+        if _is_l4t_workspace(p):
             return p
     return None
 
@@ -305,7 +344,7 @@ def build_firmware(
     if not l4t_root:
         return False, "错误: 未找到 Linux_for_Tegra 目录"
 
-    if not (l4t_root / "apply_binaries.sh").exists():
+    if not _is_l4t_workspace(l4t_root):
         return False, f"错误: {l4t_root} 不是有效的 L4T 目录"
 
     emit(stage, f"找到 L4T 目录: {l4t_root}", 10)
@@ -932,6 +971,8 @@ def get_firmware_status() -> Dict:
     status = {
         "l4t_ready": False,
         "l4t_path": "",
+        "l4t_branch": "",
+        "kernel_dir": "",
         "available_boards": [],
         "recovery_devices": {},
         "rootfs_ready": False,
@@ -941,7 +982,9 @@ def get_firmware_status() -> Dict:
     if l4t_root:
         status["l4t_ready"] = True
         status["l4t_path"] = str(l4t_root)
+        status["l4t_branch"] = get_l4t_branch(l4t_root)
         status["available_boards"] = get_available_boards(l4t_root)
+        status["kernel_dir"] = find_kernel_src_dir(l4t_root) or ""
 
         # 检查 rootfs
         rootfs_dir = l4t_root / "rootfs"

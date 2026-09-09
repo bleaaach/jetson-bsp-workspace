@@ -64,8 +64,12 @@ require_confirmation() {
 }
 
 validate() {
-    [[ -f "${L4T_ROOT}/apply_binaries.sh" ]] || die \
-        "${L4T_ROOT} is not a complete extracted Linux_for_Tegra BSP. Pass --l4t-root for the official BSP workspace."
+    # R39.x 分支: apply_binaries.sh 在根目录; R36.x 及更早分支: 无该文件, 但有 source/ 与 bootloader/
+    if [[ ! -f "${L4T_ROOT}/apply_binaries.sh" ]] && \
+       ! ( [[ -d "${L4T_ROOT}/source" ]] && [[ -d "${L4T_ROOT}/bootloader" ]] ); then
+        die \
+            "${L4T_ROOT} is not a complete Linux_for_Tegra BSP. Pass --l4t-root for the official BSP workspace."
+    fi
     require_file "${L4T_ROOT}/source/nvbuild.sh"
     require_file "${L4T_ROOT}/source/do_copy.sh"
     require_file "${L4T_ROOT}/tools/kernel_flash/l4t_initrd_flash.sh"
@@ -82,6 +86,9 @@ validate() {
 
 prepare() {
     validate
+    if [[ ! -f "${L4T_ROOT}/apply_binaries.sh" ]]; then
+        die "${L4T_ROOT} lacks apply_binaries.sh (r36.x branch). Prepare the rootfs with the official BSP's apply_binaries.sh."
+    fi
     (
         cd "${L4T_ROOT}"
         sudo ./apply_binaries.sh

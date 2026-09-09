@@ -36,7 +36,10 @@ title() { printf '\n%s%s%s\n' "${C_BOLD}${C_BLUE}" "$1" "${C_RESET}"; hr; }
 # ============================================================================
 
 check_l4t() {
-    [[ -d "${L4T_ROOT}" ]] && [[ -f "${L4T_ROOT}/apply_binaries.sh" ]]
+    [[ -d "${L4T_ROOT}" ]] && { \
+        [[ -f "${L4T_ROOT}/apply_binaries.sh" ]] || \
+        ( [[ -d "${L4T_ROOT}/source" ]] && [[ -d "${L4T_ROOT}/bootloader" ]] ); \
+    }
 }
 
 check_toolchain() {
@@ -48,9 +51,26 @@ check_recovery() {
     lsusb 2>/dev/null | grep -q "${vid}"
 }
 
+# 探测 L4T 中实际存在的内核源码目录名 (kernel-noble / kernel-jammy-src / kernel_src / kernel)
+# 不同分支命名不同: R39.x → kernel-noble, R36.x 及更早 → kernel-jammy-src
+find_kernel_src_dir() {
+    local d
+    for d in kernel-noble kernel-jammy-src kernel_src kernel; do
+        if [[ -f "${L4T_ROOT}/source/kernel/${d}/Makefile" ]]; then
+            echo "${d}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# 读取 L4T git 分支名; 非 git 仓库返回空
+l4t_branch() {
+    git -C "${L4T_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || true
+}
+
 check_kernel_source() {
-    local src="${L4T_ROOT}/source/kernel/kernel-noble/Makefile"
-    [[ -f "${src}" ]]
+    [[ -n "$(find_kernel_src_dir)" ]]
 }
 
 # ============================================================================
@@ -82,11 +102,16 @@ cmd_status() {
     # 内核源码
     echo ""
     echo "🖥️ 内核源码:"
-    if check_kernel_source; then
-        ok "已就绪"
-        du -sh "${L4T_ROOT}/source/kernel/kernel-noble" 2>/dev/null
+    local kdir branch
+    if kdir="$(find_kernel_src_dir)"; then
+        ok "已就绪 (${kdir})"
+        du -sh "${L4T_ROOT}/source/kernel/${kdir}" 2>/dev/null
     else
-        warn "内核源码未准备好 (需要: cp -r Source/R39.2.0/kernel/kernel-noble Linux_for_Tegra/source/)"
+        warn "内核源码未准备好 (需要: cp -r Source/<version>/kernel/kernel-noble|kernel-jammy-src Linux_for_Tegra/source/kernel/)"
+    fi
+    branch="$(l4t_branch)"
+    if [[ -n "${branch}" ]]; then
+        echo "  🔀 当前分支: ${branch}"
     fi
 
     # Recovery 设备
@@ -98,7 +123,7 @@ cmd_status() {
     # 编译产物
     echo ""
     echo "📁 编译产物:"
-    if [[ -f "${L4T_ROOT}/source/kernel_out/kernel/kernel-noble/arch/arm64/boot/Image" ]]; then
+    if kdir="$(find_kernel_src_dir)" && [[ -f "${L4T_ROOT}/source/kernel_out/kernel/${kdir}/arch/arm64/boot/Image" ]]; then
         ok "内核镜像已编译"
     else
         info "内核镜像未编译"
@@ -136,10 +161,10 @@ cmd_kernel_help() {
 
 前提条件:
   1. 工具链: toolchain/aarch64--glibc--stable-2022.08-1
-  2. 源码: Source/R39.2.0/kernel/kernel-noble
+  2. 源码: Source/<version>/kernel/kernel-noble 或 kernel-jammy-src (与 L4T 分支匹配)
 
 示例:
-  ./jetson-firmware-build.sh kernel prepare   # 准备源码
+  ./jetson-firmware-build.sh kernel prepare   # 准备源码 (自动匹配分支)
   ./jetson-firmware-build.sh kernel build     # 编译 (30分钟+)
   sudo ./jetson-firmware-build.sh kernel install  # 安装到 rootfs
 EOF
@@ -152,19 +177,48 @@ cmd_kernel() {
     case "$cmd" in
         prepare)
             title "内核: 准备源码"
-            
-            if [[ ! -d "${WORKSPACE}/Source/R39.2.0/kernel/kernel-noble" ]]; then
-                err "源码不存在: ${WORKSPACE}/Source/R39.2.0/kernel/kernel-noble"
+
+            local kdir ver ver_upper src
+            if ! kdir="$(find_kernel_src_dir)" && [[ ! -f "${L4T_ROOT}/source/kernel/kernel-noble/Makefile" ]]; then
+                # L4T 中没有源码时, 从分支名推断目标目录名
+                ver="$(l4t_branch)"
+                case "${ver}" in
+                    r39*|r4*|r5*) kdir="kernel-noble" ;;
+                    *)            kdir="kernel-jammy-src" ;;
+                esac
+            fi
+            if [[ -z "${kdir}" ]]; then
+                err "无法确定内核源码目录名"
                 return 1
             fi
-            
+
+            # 目标目录 = 当前 L4T 的 source/kernel/<kdir> (rm 只清目标, 保留同分支其它格式)
+            local src_candidates=()
+            if ver="$(l4t_branch)" && [[ -n "${ver}" ]]; then
+                ver_upper="${ver^^}"
+                src_candidates+=("${WORKSPACE}/Source/${ver_upper}/kernel/${kdir}")
+            fi
+            src_candidates+=("${WORKSPACE}/Source"/*/"kernel/${kdir}")
+
+            src=""
+            for c in "${src_candidates[@]}"; do
+                if [[ -d "${c}" ]]; then
+                    src="${c}"
+                    break
+                fi
+            done
+            if [[ -z "${src}" ]]; then
+                err "源码不存在: Source/<version>/kernel/${kdir} (分支: $(l4t_branch))"
+                return 1
+            fi
+
             info "复制内核源码到 L4T..."
-            rm -rf "${L4T_ROOT}/source/kernel/kernel-noble" 2>/dev/null || true
-            cp -r "${WORKSPACE}/Source/R39.2.0/kernel/kernel-noble" "${L4T_ROOT}/source/"
-            
+            rm -rf "${L4T_ROOT}/source/kernel/${kdir}" 2>/dev/null || true
+            cp -r "${src}" "${L4T_ROOT}/source/kernel/"
+
             if check_kernel_source; then
                 ok "源码准备完成"
-                du -sh "${L4T_ROOT}/source/kernel/kernel-noble"
+                du -sh "${L4T_ROOT}/source/kernel/${kdir}"
             else
                 err "源码准备失败"
                 return 1
@@ -173,16 +227,22 @@ cmd_kernel() {
 
         build)
             title "内核: 编译"
-            
-            if ! check_kernel_source; then
+
+            local kdir
+            if ! kdir="$(find_kernel_src_dir)"; then
                 warn "内核源码未准备好，先执行: kernel prepare"
                 read -p "是否现在准备? [Y/n] " -n 1 -r
                 echo
                 if [[ ! $REPLY =~ ^[Nn]$ ]]; then
                     cmd_kernel prepare
+                    kdir="$(find_kernel_src_dir)"
                 else
                     return 1
                 fi
+            fi
+            if [[ -z "${kdir}" ]]; then
+                err "内核源码不可用: ${L4T_ROOT}/source/kernel/"
+                return 1
             fi
 
             if ! check_toolchain; then
@@ -199,14 +259,14 @@ cmd_kernel() {
             
             info "开始编译内核 (预计 30-60 分钟)..."
             info "编译日志会输出到终端"
-            info "完成后内核镜像位于: source/kernel_out/kernel/kernel-noble/arch/arm64/boot/Image"
+            info "完成后内核镜像位于: source/kernel_out/kernel/${kdir}/arch/arm64/boot/Image"
             echo ""
             
             # 编译
             ./nvbuild.sh
             
             # 检查结果
-            local image="${L4T_ROOT}/source/kernel_out/kernel/kernel-noble/arch/arm64/boot/Image"
+            local image="${L4T_ROOT}/source/kernel_out/kernel/${kdir}/arch/arm64/boot/Image"
             if [[ -f "${image}" ]]; then
                 ok "内核编译成功!"
                 ls -lh "${image}"
@@ -218,8 +278,9 @@ cmd_kernel() {
 
         install)
             title "内核: 安装到 rootfs"
-            
-            if [[ ! -f "${L4T_ROOT}/source/kernel_out/kernel/kernel-noble/arch/arm64/boot/Image" ]]; then
+
+            local kdir
+            if ! kdir="$(find_kernel_src_dir)" || [[ ! -f "${L4T_ROOT}/source/kernel_out/kernel/${kdir}/arch/arm64/boot/Image" ]]; then
                 err "内核未编译，请先: kernel build"
                 return 1
             fi

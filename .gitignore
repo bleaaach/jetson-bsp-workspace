@@ -13,7 +13,8 @@ System.map
 # Downloaded/extracted BSP sources and archives
 Downloads/
 Source/
-Linux_for_Tegra/
+Linux_for_Tegra
+Reference/
 toolchain/
 tools/
 *.tbz2

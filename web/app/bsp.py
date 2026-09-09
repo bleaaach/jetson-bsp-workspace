@@ -19,6 +19,7 @@ WORKSPACE = Path("/home/seeed/bsp-workspace")
 SOURCE_DIR = WORKSPACE / "Source"
 BUILD_DIR = WORKSPACE / "Build"
 DOWNLOAD_DIR = WORKSPACE / "Downloads"
+REFERENCE_DIR = WORKSPACE / "Reference"
 
 
 # =============================================================================
@@ -50,6 +51,12 @@ class ModuleSource:
     kconfig_help: str = ""
     makefile_rules: list[str] = field(default_factory=list)
     extra_configs: list[str] = field(default_factory=list)  # sub-configs
+    origins: dict = field(default_factory=dict)  # {rel_path: nvidia-official|seeed-modified|seeed-only}
+    bsp_default: str = ""       # Seeed BSP defconfig 显式值 ("y"/"m"/"n"/"not set"/"" 未显式)
+    official_default: str = ""  # NVIDIA 官方 defconfig 显式值
+    build_value: str = ""       # 本机实际构建 .config 中的值 ("" 无构建记录)
+    rootfs_ko: str = ""         # rootfs 中实际部署的 .ko 相对路径 ("" 未部署)
+    in_tree: bool = True        # 内核树内是否有源码 (False → 需外部源码/自建)
 
 
 @dataclass
@@ -233,6 +240,23 @@ def get_bsp_catalog() -> list[dict]:
     return out
 
 
+def _seeed_overlay_root() -> str:
+    """Seeed BSP 检出树的 kernel 覆盖层根 (WORKSPACE/Linux_for_Tegra → Desktop 检出)。
+
+    不同分支目录名不同: r39.x → kernel-noble, r36.x → kernel-jammy-src。
+    检出树里 track 了 Seeed 对官方内核的修改/新增文件 (如 rtw88, lan743x,
+    spi-tegra114, i2c-atr); Source/<ver>/ 则是官方原版解压树。
+    """
+    l4t = WORKSPACE / "Linux_for_Tegra"
+    if not (l4t / "source" / "kernel").is_dir():
+        return ""
+    for name in ("kernel-noble", "kernel-jammy-src", "kernel_src", "kernel"):
+        p = l4t / "source" / "kernel" / name
+        if (p / "Makefile").is_file():
+            return str(p)
+    return ""
+
+
 def _find_kernel_source(version: str) -> str:
     """Find kernel source directory for a given BSP version.
 
@@ -244,8 +268,9 @@ def _find_kernel_source(version: str) -> str:
         SOURCE_DIR / version / "kernel_src",
         SOURCE_DIR / version / "kernel" / "kernel-jammy-src",
         SOURCE_DIR / version / "kernel" / "kernel_src",
-        SOURCE_DIR / version / "kernel" / "kernel-noble",      # R39 style
-        SOURCE_DIR / version / "kernel_src" / "kernel",         # R39 style
+        SOURCE_DIR / version / "kernel" / "kernel_src" / "kernel-5.10",  # R35 style
+        SOURCE_DIR / version / "kernel" / "kernel" / "kernel-jammy-src",
+        SOURCE_DIR / version / "kernel" / "kernel" / "kernel_src",
         DOWNLOAD_DIR / version / "Linux_for_Tegra" / "source" / "kernel" / "kernel-jammy-src",
         DOWNLOAD_DIR / version / "Linux_for_Tegra" / "source" / "kernel" / "kernel_src",
         DOWNLOAD_DIR / version / "Linux_for_Tegra" / "source" / "kernel" / "kernel-noble",
@@ -268,6 +293,209 @@ def _find_kernel_source(version: str) -> str:
                 return root
 
     return ""
+
+
+_REFERENCE_LOCK = threading.Lock()
+
+
+def _find_official_kernel(version: str) -> str:
+    """解析 NVIDIA 官方内核源码目录 (Reference/<VERSION>/kernel/<dir>)。
+
+    优先使用已解压的基准; 若不存在则尝试从本机 Source/<ver>/Linux_for_Tegra/
+    source/kernel_src.tbz2 解压 (R39 及部分版本), 或 Downloads/<ver>/ 中的包。
+    找不到返回 ""。
+    """
+    norm = version.strip().lstrip("rR").upper()
+    version = f"R{norm}"
+    ref_root = REFERENCE_DIR / version / "kernel"
+    # 已解压: 目录下含 Makefile 的 kernel-* 子目录即基准树
+    if ref_root.is_dir():
+        for sub in sorted(ref_root.iterdir()):
+            if sub.is_dir() and (sub / "Makefile").is_file():
+                return str(sub)
+
+    # 找到本机 kernel_src 包
+    candidates = [
+        SOURCE_DIR / version / "Linux_for_Tegra" / "source" / "kernel_src.tbz2",
+        DOWNLOAD_DIR / version / "Linux_for_Tegra" / "source" / "kernel_src.tbz2",
+    ]
+    archive = next((p for p in candidates if p.is_file()), None)
+    if archive is None:
+        return ""
+
+    # 解压到 Reference/<version>/ 下, 顶层为 kernel/<dir> (与官方包一致)
+    dest = REFERENCE_DIR / version
+    with _REFERENCE_LOCK:
+        if ref_root.is_dir() and any(
+            (sub / "Makefile").is_file() for sub in ref_root.iterdir()
+        ):
+            return str(next(
+                sub for sub in ref_root.iterdir() if (sub / "Makefile").is_file()
+            ))
+        dest.mkdir(parents=True, exist_ok=True)
+        _run_shell(
+            f'tar -xjf "{archive}" -C "{dest}"', timeout=3600,
+        )
+    if ref_root.is_dir():
+        for sub in sorted(ref_root.iterdir()):
+            if sub.is_dir() and (sub / "Makefile").is_file():
+                return str(sub)
+    return ""
+
+
+def classify_source_origin(
+    version: str, ksrc: str, rel_path: str, official_kernel: str = None
+) -> str:
+    """判定某相对路径源码的出处。
+
+    返回:
+      nvidia-official  — NVIDIA 官方原版 (官方基准存在且内容一致)
+      seeed-modified   — Seeed 基于官方修改 (官方基准存在但内容有差异)
+      seeed-only       — Seeed 独有 (官方基准中不存在)
+      unknown          — 判定失败 (路径不在当前内核树 / 无官方基准)
+    """
+    if not rel_path:
+        return "unknown"
+    current = Path(ksrc) / rel_path.lstrip("/")
+    if not current.exists():
+        return "unknown"
+    if official_kernel is None:
+        official_kernel = _find_official_kernel(version)
+    if not official_kernel:
+        return "unknown"
+    official = Path(official_kernel) / rel_path.lstrip("/")
+    if not official.exists():
+        return "seeed-only"
+    try:
+        same = _files_equal(current, official)
+    except OSError:
+        return "unknown"
+    return "nvidia-official" if same else "seeed-modified"
+
+
+def _files_equal(a: Path, b: Path) -> bool:
+    """按内容比较两个文件 (逐块, 避免大文件整读)"""
+    if a.is_dir() or b.is_dir():
+        return False
+    ha, hb = _file_sha1(a), _file_sha1(b)
+    return ha is not None and ha == hb
+
+
+def _file_sha1(p: Path) -> Optional[str]:
+    import hashlib
+    h = hashlib.sha1()
+    try:
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+    except OSError:
+        return None
+    return h.hexdigest()
+
+
+def _config_value_in_defconfig(defconfig: Path, config_name: str) -> str:
+    """在 defconfig 文件中读取 CONFIG 项的值。
+
+    返回 "y" / "m" / "n" / "not set"; 不存在返回 ""。
+    """
+    if not defconfig.is_file():
+        return ""
+    try:
+        text = defconfig.read_text(errors="ignore")
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith(f"# {config_name} is not set"):
+            return "not set"
+        if line.startswith(f"{config_name}="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def _find_seeed_defconfig() -> Path:
+    """Seeed BSP 检出树中的 defconfig 路径 (可能不存在)"""
+    overlay = _seeed_overlay_root()
+    if not overlay:
+        return Path("")
+    for rel in ("arch/arm64/configs/defconfig", "defconfig"):
+        p = Path(overlay) / rel
+        if p.is_file():
+            return p
+    return Path("")
+
+
+def _version_from_branch() -> str:
+    """从 Seeed 检出分支名反推 BSP 版本 (r39.2.0 -> R39.2.0)"""
+    try:
+        out, _, rc = _run_shell(
+            f'git -C "{WORKSPACE / "Linux_for_Tegra"}" rev-parse --abbrev-ref HEAD 2>/dev/null',
+            timeout=5,
+        )
+        branch = out.strip().splitlines()[-1] if out.strip() else ""
+    except Exception:
+        return ""
+    if not branch or branch.startswith(("HEAD", "main")):
+        return ""
+    return "R" + branch.lstrip("r").upper()
+
+
+def _rootfs_ko_path(module: str) -> str:
+    """在 Seeed rootfs 中查找该模块的 .ko; 无则返回空。
+
+    rootfs 布局: Linux_for_Tegra/rootfs/lib/modules/<ver>/...
+    """
+    rootfs = WORKSPACE / "Linux_for_Tegra" / "rootfs"
+    if not (rootfs / "lib" / "modules").is_dir():
+        return ""
+    hits = []
+    for mdir in (rootfs / "lib" / "modules").iterdir():
+        if not mdir.is_dir():
+            continue
+        for p in mdir.rglob(f"{module}.ko*"):
+            if p.is_file():
+                hits.append(str(p.relative_to(WORKSPACE)))
+    return hits[0] if hits else ""
+
+
+def get_defconfig_defaults(config_name: str, bsp_version: str = "") -> dict:
+    """查询 CONFIG 在 Seeed BSP 与 NVIDIA 官方 defconfig 中的默认值。
+
+    defconfig 只显式列出与 Kconfig 默认不同的项; 未列出的项不表示关闭,
+    实际生效值要看构建 .config。返回:
+      {"seeed_default": ..., "official_default": ..., "build_value": ...}
+      seeed_default   — defconfig 显式值 ("y"/"m"/"n"/"not set"/"" 未显式)
+      official_default— 官方 defconfig 显式值 (同上)
+      build_value     — 本机实际构建 .config 中的值 ("" 表示无构建记录)
+    """
+    if not config_name:
+        return {"seeed_default": "", "official_default": "", "build_value": ""}
+    seeed_def = _find_seeed_defconfig()
+    seeed_default = (
+        _config_value_in_defconfig(seeed_def, config_name) if seeed_def else ""
+    )
+    # 官方基线: 优先用同版本; 否则用检出分支版本; 否则空
+    version = bsp_version or _version_from_branch()
+    official_default = ""
+    if version:
+        official = _find_official_kernel(version)
+        if official:
+            off_def = Path(official) / "arch/arm64/configs/defconfig"
+            official_default = _config_value_in_defconfig(off_def, config_name)
+
+    # 实际构建 .config: Build/<ver>-*/.../.config (用户真实编译状态)
+    build_value = ""
+    if version:
+        pat = BUILD_DIR.glob(f"{version}-*")
+        cfgs = [
+            p
+            for d in pat if d.is_dir()
+            for p in d.rglob(".config") if p.is_file()
+        ]
+        if cfgs:
+            build_value = _config_value_in_defconfig(cfgs[0], config_name)
+    return {"seeed_default": seeed_default, "official_default": official_default,
+            "build_value": build_value}
 
 
 def bsp_status(version: str) -> dict:
@@ -429,10 +657,9 @@ def query_module(module: str, bsp_version: str = "R36.4.4") -> ModuleQueryResult
                 )
                 source_files.extend(x for x in src_out.splitlines() if x)
 
-    if not source_files and not dir_matches:
-        result.available = False
-        result.summary = f"在内核树中未找到 {module} 源码"
-        return result
+    # 内核树无源码: 不再早退, 继续走 compiled_kos / summary,
+    # 让树外模块也能看到本机 Build 产物与归属结论 (in_tree=False)
+    in_tree = bool(source_files or dir_matches)
 
     # -------------------------------------------------------------------------
     # 2. Find Kconfig / CONFIG name
@@ -444,7 +671,12 @@ def query_module(module: str, bsp_version: str = "R36.4.4") -> ModuleQueryResult
     makefile_rules = []
 
     # Method 1: obj-${CONFIG} += ${module}.o
-    pattern = f'grep -rhE "obj-\\$\\(CONFIG_[A-Z0-9_]+\\)[[:space:]]*\\+=[[:space:]]*{re.escape(module)}\\.o" --include="Makefile" 2>/dev/null'
+    # 注意: 用 shell 单引号包 regex, 避免双引号把 \$ 折叠成行尾锚点
+    pattern = (
+        "grep -rhE 'obj-\\$\\(CONFIG_[A-Z0-9_]+\\)[[:space:]]*\\+="
+        f"[[:space:]]*{re.escape(module)}\\.o' "
+        '--include="Makefile" 2>/dev/null'
+    )
     for line in _grep_kernel(ksrc, pattern, timeout=20):
         m = re.search(r'CONFIG_[A-Z0-9_]+', line)
         if m and not config_name:
@@ -453,7 +685,11 @@ def query_module(module: str, bsp_version: str = "R36.4.4") -> ModuleQueryResult
 
     # Method 2: obj-${CONFIG} += ${module}_xxx.o (complex drivers)
     if not config_name:
-        pattern = f'grep -rhE "obj-\\$\\(CONFIG_[A-Z0-9_]+\\)[[:space:]]*\\+=[[:space:]]*{re.escape(module)}_[a-z0-9]*\\.o" --include="Makefile" 2>/dev/null'
+        pattern = (
+            "grep -rhE 'obj-\\$\\(CONFIG_[A-Z0-9_]+\\)[[:space:]]*\\+="
+            f"[[:space:]]*{re.escape(module)}_[a-z0-9]*\\.o' "
+            '--include="Makefile" 2>/dev/null'
+        )
         for line in _grep_kernel(ksrc, pattern, timeout=20):
             m = re.search(r'CONFIG_[A-Z0-9_]+', line)
             if m and not config_name:
@@ -463,7 +699,10 @@ def query_module(module: str, bsp_version: str = "R36.4.4") -> ModuleQueryResult
     # Method 3: directory-style (rtw89, iwlwifi)
     if not config_name:
         for subdir in ["drivers/net/wireless", "drivers"]:
-            pattern = f'grep -rhE "obj-\\$\\(CONFIG_[A-Z0-9_]+\\)[[:space:]]*\\+=" "{module}" --include="Makefile" 2>/dev/null'
+            pattern = (
+                "grep -rhE 'obj-\\$\\(CONFIG_[A-Z0-9_]+\\)[[:space:]]*\\+=' "
+                f'"{subdir}/{module}"  --include="Makefile" 2>/dev/null'
+            )
             for line in _grep_kernel(ksrc, pattern, timeout=20):
                 m = re.search(r'CONFIG_[A-Z0-9_]+', line)
                 if m and not config_name:
@@ -503,7 +742,23 @@ def query_module(module: str, bsp_version: str = "R36.4.4") -> ModuleQueryResult
         kconfig_help=kconfig_help,
         makefile_rules=makefile_rules,
         extra_configs=extra_configs,
+        in_tree=in_tree,
     )
+    # 判定每个源文件的出处 (NVIDIA 官方 / Seeed 修改 / Seeed 独有)
+    official_kernel = _find_official_kernel(bsp_version)
+    if official_kernel and source_files:
+        source.origins = {
+            f: classify_source_origin(bsp_version, ksrc, f, official_kernel)
+            for f in source_files
+        }
+    # BSP 默认配置 (Seeed defconfig vs NVIDIA 官方 defconfig)
+    if config_name:
+        defaults = get_defconfig_defaults(config_name, bsp_version)
+        source.bsp_default = defaults["seeed_default"]
+        source.official_default = defaults["official_default"]
+        source.build_value = defaults["build_value"]
+    # 设备侧实际部署: rootfs 中是否有该模块 .ko (真正的 "BSP 自带")
+    source.rootfs_ko = _rootfs_ko_path(module)
     result.source = source
 
     # -------------------------------------------------------------------------
@@ -558,14 +813,41 @@ def query_module(module: str, bsp_version: str = "R36.4.4") -> ModuleQueryResult
             vermagic=vermagic,
             build_config=str(ko.parent.parent.name),
         ))
+    # 模糊目录匹配: 自建产物目录形如 Build/R36.4.4-rtw89-8852be,
+    # deploy 内 .ko 命名 (rtw_8852be.ko 等) 无法被 {module}.ko 直接命中
+    norm = module.replace("-", "_")
+    seen_paths = {k.path for k in ko_files}
+    for d in BUILD_DIR.glob(f"{bsp_version}-*"):
+        if not d.is_dir() or norm not in d.name.replace("-", "_"):
+            continue
+        for ko in d.rglob("*.ko"):
+            # kbuild/ 是完整内核 O= 中间构建树 (上千 .ko), 只收 deploy 等产物目录
+            if ko.relative_to(d).parts[0] == "kbuild":
+                continue
+            rel = str(ko.relative_to(WORKSPACE))
+            if rel in seen_paths:
+                continue
+            seen_paths.add(rel)
+            size = _human_size(ko.stat().st_size)
+            vermagic = ""
+            out, _, _ = _run_shell(f"modinfo -F vermagic '{ko}' 2>/dev/null", timeout=5)
+            if out.strip():
+                vermagic = out.strip().splitlines()[0]
+            ko_files.append(CompiledKO(
+                path=rel,
+                size=size,
+                vermagic=vermagic,
+                build_config=str(d.name),
+            ))
     result.compiled_kos = ko_files
 
     # -------------------------------------------------------------------------
-    # 5. Summary
-    # -------------------------------------------------------------------------
     parts = []
-    if source_files or dir_matches:
+    if in_tree:
         parts.append("内核源码存在")
+    else:
+        parts.append("内核树无此驱动源码")
+        parts.append("需外部源码/自建")
     if config_name:
         parts.append(f"CONFIG={config_name}")
     if result.config_status:
@@ -576,8 +858,9 @@ def query_module(module: str, bsp_version: str = "R36.4.4") -> ModuleQueryResult
         parts.append(label)
     if ko_files:
         parts.append(f"已有 {len(ko_files)} 个 .ko")
-
     result.summary = " | ".join(parts) if parts else "未找到任何信息"
+    # 有源码 / 有 CONFIG / 有编译产物 → 视为可用; 三者全无才判定不可用
+    result.available = bool(in_tree or config_name or ko_files)
     return result
 
 

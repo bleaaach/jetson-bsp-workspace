@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # build-rtw89-8852be.sh
 # =============================================================================
-# 编译 Realtek RTL8852BE (rtw89) 内核模块，针对 Jetson L4T 两个内核代系:
-#
 #   JP7.2  (L4T R39.2.0, 6.8.12-tegra, kernel-noble)   → in-tree 编译
 #   JP6.2  (L4T R36.4.x, 5.15.148-tegra, kernel-jammy) → out-of-tree (lwfinger/rtw89)
+#   JP5.1.3(L4T R35.5.0, 5.10.x-tegra, kernel_src)     → out-of-tree (lwfinger/rtw89)
 #
 # 符号表策略 (关键): 模块的 modpost 需要该内核的 Module.symvers (含内核导出
 # 符号 CRC), 否则产物带 unresolved, 板上 modprobe 会失败。
@@ -12,18 +11,19 @@
 #   - 没有 → 编译 make Image 生成 (自洽, 较慢)
 #
 # 用法:
-#   ./build-rtw89-8852be.sh <jp7.2|jp6.2> [--bsp R36.4.3] [--outdir DIR]
+#   ./build-rtw89-8852be.sh <jp7.2|jp6.2|jp5.1.3> [--bsp R36.4.3] [--outdir DIR]
 #                            [--lw-src DIR] [--headers FILE.tbz2] [--no-clean]
 #
-#   --bsp      覆盖默认 BSP 版本 (jp6.2 默认 R36.4.4; jp7.2 固定 R39.2.0)
+#   --bsp      覆盖默认 BSP 版本 (jp6.2 默认 R36.4.4; jp5.1.3 默认 R35.5.0; jp7.2 固定 R39.2.0)
 #   --outdir   产物输出目录 (默认 Build/<BSP>-rtw89-8852be/deploy)
-#   --lw-src   rtw89 外部源码目录 (jp6.2; 默认 $HOME/rtw89-src)
+#   --lw-src   rtw89 外部源码目录 (jp6.2/jp5.1.3; 默认 $HOME/rtw89-src)
 #   --headers  NVIDIA kernel_headers.tbz2 路径 (指明后用其 Module.symvers)
 #   --no-clean 跳过 mrproper / M= 清理 (增量重编)
 #
 # 前置:
 #   - 内核源码树: Source/<BSP>/kernel/kernel-jammy-src (jp6.2)
 #                 Source/R39.2.0/kernel/kernel-noble  (jp7.2)
+#                 Source/<BSP>/kernel/kernel_src      (jp5.1.3)
 #   - 工具链: toolchain/aarch64--glibc--stable-2022.08-1
 #   - host: tools/host/bin (flex/bison/m4)
 # =============================================================================
@@ -68,7 +68,13 @@ case "${TARGET}" in
         KDIR="${WORKSPACE}/Source/${BSP}/kernel/kernel-jammy-src"
         MODKO=(rtw89core rtw89pci rtw_8852b rtw_8852be)
         ;;
-    *) err "未知目标: ${TARGET} (jp7.2 / jp6.2)"; exit 1 ;;
+    jp5.1.3|5.1.3|35.5.*|r35.5*)
+        # JP5.1.3 (L4T R35.5.0, 5.10.x-tegra): 树内无 rtw89 → 同样走 lwfinger 外挂
+        MODE="out-of-tree"; BSP="${BSP_OVERRIDE:-R35.5.0}"; BSP="R${BSP#R}"
+        KDIR="${WORKSPACE}/Source/${BSP}/kernel/kernel_src/kernel-5.10"
+        MODKO=(rtw89core rtw89pci rtw_8852b rtw_8852be)
+        ;;
+    *) err "未知目标: ${TARGET} (jp7.2 / jp6.2 / jp5.1.3)"; exit 1 ;;
 esac
 
 OUT_BASE="${OUTDIR_OVERRIDE:-${WORKSPACE}/Build/${BSP}-rtw89-8852be}"
@@ -93,12 +99,13 @@ echo "   版本: $(grep -E '^VERSION' "${KDIR}/Makefile" | head -1 | awk '{print
 prepare_symvers() {
     # kbuild modpost (尤其 single_modules/file-target) 只接受 vmlinux 作为
     # 内核导出符号源; 手动放置 Module.symvers 不生效。标准路径: 先编 vmlinux。
+    # KCFLAGS: R35 (5.10) 需 -march 使 gcc __sync 内建内联, 否则 vmlinux 链接失败
     if [[ -f "${KOUT}/vmlinux" ]]; then
         ok "符号表已就绪 (vmlinux): $(wc -l < "${KOUT}/Module.symvers") 条"
         return 0
     fi
     warn "编译 vmlinux 生成官方级符号表 (首次约 20-40 分钟, 增量后复用) ..."
-    make -C "${KDIR}" O="${KOUT}" -j"$(nproc)" vmlinux || exit 1
+    make -C "${KDIR}" O="${KOUT}" -j"$(nproc)" ${KSYM_KCFLAGS} vmlinux || exit 1
     ok "vmlinux 完成, Module.symvers 生成"
 }
 
@@ -115,6 +122,7 @@ if [[ "${MODE}" == "in-tree" ]]; then
             --module RTW89_CORE --module RTW89_PCI --module RTW89_8852B --module RTW89_8852BE \
             --module CFG80211 --module MAC80211
     fi
+    KSYM_KCFLAGS=""
     make -C "${KDIR}" O="${KOUT}" -j"$(nproc)" modules_prepare || exit 1
     prepare_symvers
 
@@ -132,14 +140,21 @@ if [[ "${MODE}" == "in-tree" ]]; then
 
 else
     # ===== JP6.2: kernel-jammy out-of-tree (lwfinger) =====
-    make -C "${KDIR}" O="${KOUT}" ARCH=arm64 defconfig || exit 1
+    # R35 (5.10): gcc __sync 原子内建在无 -march 时会生成 libgcc outline 调用
+    # (__aarch64_cas4 等), 内核态无 libgcc → vmlinux 链接失败。
+    # 显式 -march=armv8.4-a (与内核 asm-arch 一致) 使其内联为 LSE/LLSC 指令。
+    # 该标志只影响本脚本触发的编译, 不改内核源码。
+    ARCH_FLAGS=""
+    # -Wno-error=...: gcc 11 对 NVIDIA 旧代码报 misleading-indentation (官方 gcc 9 无), 降为警告
+    [[ "${TARGET}" == "jp5.1.3" || "${BSP}" == R35* ]] && ARCH_FLAGS='-march=armv8.4-a -Wno-error=misleading-indentation'
     "${KDIR}/scripts/config" --file "${KOUT}/.config" --set-str LOCALVERSION "-tegra"
     grep -qE '^CONFIG_CFG80211=m|^CONFIG_MAC80211=m' "${KOUT}/.config" || { err "defconfig 无 CFG80211/MAC80211"; exit 1; }
-    make -C "${KDIR}" O="${KOUT}" -j"$(nproc)" modules_prepare || exit 1
+    make -C "${KDIR}" O="${KOUT}" -j"$(nproc)" KCFLAGS="${ARCH_FLAGS}" modules_prepare || exit 1
+    KSYM_KCFLAGS="KCFLAGS=${ARCH_FLAGS}"
     prepare_symvers
 
     warn "编译 cfg80211/mac80211 等 (全量 modules, 符号进 Module.symvers)..."
-    make -C "${KDIR}" O="${KOUT}" -j"$(nproc)" modules || exit 1
+    make -C "${KDIR}" O="${KOUT}" -j"$(nproc)" KCFLAGS="${ARCH_FLAGS}" modules || exit 1
 
     (( DO_CLEAN )) && make -C "${LW_SRC}" clean >/dev/null 2>&1 || true
     make -C "${KDIR}" O="${KOUT}" -j"$(nproc)" M="${LW_SRC}" modules || exit 1

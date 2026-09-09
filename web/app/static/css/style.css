@@ -459,6 +459,18 @@ body {
   color: var(--accent);
   word-break: break-all;
 }
+.origin-badge {
+  display: inline-flex; align-items: center;
+  margin-right: 8px; padding: 1px 8px;
+  border-radius: 20px;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  white-space: nowrap;
+}
+.origin-badge.origin-nvidia  { background: var(--blue); color: #0a1460; }
+.origin-badge.origin-seeed   { background: var(--yellow-glow); color: var(--yellow); }
+.origin-badge.origin-seeed-only { background: var(--green-glow); color: var(--green); }
+.origin-badge.origin-unknown { background: var(--bg-card2); color: var(--text-muted); }
+.status-badge.seeed { background: var(--yellow-glow); color: var(--yellow); }
 
 .action-row {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;

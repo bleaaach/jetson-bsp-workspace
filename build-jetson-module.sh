@@ -65,6 +65,8 @@ find_kernel_source() {
     local candidates=(
         "${workspace_dir}/Source/${ver}/kernel-jammy-src"
         "${workspace_dir}/Source/${ver}/kernel/kernel-jammy-src"
+        "${workspace_dir}/Source/${ver}/kernel/kernel-noble"     # R39 (24.04) 风格
+        "${workspace_dir}/Source/${ver}/kernel-noble"
         "${workspace_dir}/Source/${ver}-${MODULE_NAME}/kernel/kernel-jammy-src"
         "${workspace_dir}/Downloads/${ver}/Linux_for_Tegra/source/kernel/kernel-jammy-src"
         "${workspace_dir}/Downloads/${ver}/Linux_for_Tegra/source/kernel"
@@ -616,7 +618,15 @@ EOF
     ok "目标 .ko: ${module_ko_path}"
 
     # 4. 准备 build 目录 (按 BSP 版本 + 模块命名)
-    build_dir="${build_root}/${JETSON_BSP_VERSION}-${MODULE_NAME}"
+    #    R39 (kernel-noble): 若有已建成的完整会话 (vmlinux+符号表, 如 build-rtw89-8852be.sh jp7.2 产物)
+    #    直接复用, 增量编译且模块符号链完整, 避免重复全量构建
+    local reuse_dir="${build_root}/${JETSON_BSP_VERSION}-rtw89-8852be/kbuild"
+    if [[ -f "${reuse_dir}/vmlinux" && -f "${reuse_dir}/Module.symvers" ]]; then
+        build_dir="${reuse_dir}"
+        ok "复用已有 R39 构建会话 (vmlinux + 完整符号表): ${build_dir}"
+    else
+        build_dir="${build_root}/${JETSON_BSP_VERSION}-${MODULE_NAME}"
+    fi
     mkdir -p "${build_dir}"
 
     # 5. 准备 .config

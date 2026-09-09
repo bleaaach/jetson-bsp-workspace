@@ -606,6 +606,12 @@ def serialize_query_result(r: ModuleQueryResult) -> dict:
             "kconfig_help": s.kconfig_help,
             "makefile_rules": s.makefile_rules,
             "extra_configs": s.extra_configs,
+            "origins": s.origins,
+            "bsp_default": s.bsp_default,
+            "official_default": s.official_default,
+            "build_value": s.build_value,
+            "rootfs_ko": s.rootfs_ko,
+            "in_tree": s.in_tree,
         }
 
     def serialize_config(s):
