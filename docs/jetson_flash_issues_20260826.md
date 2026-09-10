@@ -88,7 +88,7 @@ Initrd Flash Kernel 启动
 ### 2.3 固件镜像 (Firmware Binaries)
 
 ```
-Bootloader 目录: /home/seeed/bsp-workspace/Linux_for_Tegra/bootloader/
+Bootloader 目录: /media/seeed/bsp-ssd1/bsp-workspace/Linux_for_Tegra/bootloader/
 ```
 
 | 组件 | 文件 | 大小 | 说明 |

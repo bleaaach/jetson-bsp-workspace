@@ -62,7 +62,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-WORKSPACE = Path("/home/seeed/bsp-workspace")
+WORKSPACE = Path("/media/seeed/bsp-ssd1/bsp-workspace")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 

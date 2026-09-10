@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
-WORKSPACE = Path("/home/seeed/bsp-workspace")
+WORKSPACE = Path("/media/seeed/bsp-ssd1/bsp-workspace")
 SOURCE_DIR = WORKSPACE / "Source"
 BUILD_DIR = WORKSPACE / "Build"
 DOWNLOAD_DIR = WORKSPACE / "Downloads"

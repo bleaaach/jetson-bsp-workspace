@@ -16,7 +16,7 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=18420, help="Port (default: 18420)")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
-    parser.add_argument("--dir", default="/home/seeed/bsp-workspace", help="Workspace directory")
+    parser.add_argument("--dir", default="/media/seeed/bsp-ssd1/bsp-workspace", help="Workspace directory")
     args = parser.parse_args()
 
     import uvicorn

@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-WORKSPACE = Path("/home/seeed/bsp-workspace")
+WORKSPACE = Path("/media/seeed/bsp-ssd1/bsp-workspace")
 DATA_DIR = WORKSPACE / "web" / "data"
 DB_PATH = DATA_DIR / "web.db"
 

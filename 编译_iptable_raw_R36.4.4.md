@@ -85,14 +85,14 @@ https://developer.nvidia.com/embedded/jetson-linux-r3644
 当前工作区提供的脚本会先从 NVIDIA Jetson Linux Archive 查找指定版本的官方页面，再从该页面获取真实下载链接：
 
 ```bash
-cd /home/seeed/bsp-workspace
+cd /media/seeed/bsp-ssd1/bsp-workspace
 ./download-jetson-bsp-sources.sh R36.4.4
 ```
 
 下载后的文件位置：
 
 ```text
-/home/seeed/bsp-workspace/Downloads/R36.4.4/public_sources.tbz2
+/media/seeed/bsp-ssd1/bsp-workspace/Downloads/R36.4.4/public_sources.tbz2
 ```
 
 检查压缩包：
@@ -216,7 +216,7 @@ tar -xjf toolchain/aarch64--glibc--stable-2022.08-1.tar.bz2 -C toolchain
 工具链前缀为：
 
 ```text
-/home/seeed/bsp-workspace/toolchain/aarch64--glibc--stable-2022.08-1/bin/aarch64-buildroot-linux-gnu-
+/media/seeed/bsp-ssd1/bsp-workspace/toolchain/aarch64--glibc--stable-2022.08-1/bin/aarch64-buildroot-linux-gnu-
 ```
 
 内核配置程序需要 `flex`、`bison` 和 `m4`。PC 可以使用 sudo 时，安装方式如下：
@@ -233,7 +233,7 @@ sudo apt install -y flex bison m4 libssl-dev bc
 执行构建脚本：
 
 ```bash
-cd /home/seeed/bsp-workspace
+cd /media/seeed/bsp-ssd1/bsp-workspace
 ./build-iptable-raw-r36.4.4.sh
 ```
 
@@ -248,7 +248,7 @@ cd /home/seeed/bsp-workspace
 目标模块输出路径：
 
 ```text
-/home/seeed/bsp-workspace/Build/R36.4.4-iptable-raw/net/ipv4/netfilter/iptable_raw.ko
+/media/seeed/bsp-ssd1/bsp-workspace/Build/R36.4.4-iptable-raw/net/ipv4/netfilter/iptable_raw.ko
 ```
 
 在 PC 上验证模块：
@@ -392,7 +392,7 @@ Source/R36.4.4-pl2303/kernel/kernel-jammy-src/scripts/config \
 本工作区提供了已配置 R36.4.4 工具链的脚本：
 
 ```bash
-cd /home/seeed/bsp-workspace
+cd /media/seeed/bsp-ssd1/bsp-workspace
 ./build-pl2303-r36.4.4.sh
 ```
 
@@ -406,7 +406,7 @@ drivers/usb/serial/pl2303.ko
 `pl2303.ko` 依赖 `usbserial.ko`。构建完成后的目标文件为：
 
 ```text
-/home/seeed/bsp-workspace/Build/R36.4.4-pl2303/drivers/usb/serial/pl2303.ko
+/media/seeed/bsp-ssd1/bsp-workspace/Build/R36.4.4-pl2303/drivers/usb/serial/pl2303.ko
 ```
 
 本次实际构建已验证：

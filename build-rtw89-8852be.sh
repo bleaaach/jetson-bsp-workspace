@@ -147,6 +147,7 @@ else
     ARCH_FLAGS=""
     # -Wno-error=...: gcc 11 对 NVIDIA 旧代码报 misleading-indentation (官方 gcc 9 无), 降为警告
     [[ "${TARGET}" == "jp5.1.3" || "${BSP}" == R35* ]] && ARCH_FLAGS='-march=armv8.4-a -Wno-error=misleading-indentation'
+    make -C "${KDIR}" O="${KOUT}" defconfig || exit 1
     "${KDIR}/scripts/config" --file "${KOUT}/.config" --set-str LOCALVERSION "-tegra"
     grep -qE '^CONFIG_CFG80211=m|^CONFIG_MAC80211=m' "${KOUT}/.config" || { err "defconfig 无 CFG80211/MAC80211"; exit 1; }
     make -C "${KDIR}" O="${KOUT}" -j"$(nproc)" KCFLAGS="${ARCH_FLAGS}" modules_prepare || exit 1

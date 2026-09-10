@@ -43,7 +43,7 @@ sudo ./flash.sh recomputer-orin-j401 mmcblk0p1
 ### Step 1: Generate RCM Boot Blob (No Device Needed)
 
 ```bash
-cd /home/seeed/bsp-workspace
+cd /media/seeed/bsp-ssd1/bsp-workspace
 ./jetson_flash_wsl.sh prepare
 ```
 

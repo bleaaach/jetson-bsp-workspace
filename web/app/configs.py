@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-WORKSPACE = Path("/home/seeed/bsp-workspace")
+WORKSPACE = Path("/media/seeed/bsp-ssd1/bsp-workspace")
 BUILD_DIR = WORKSPACE / "Build"
 SOURCE_DIR = WORKSPACE / "Source"
 

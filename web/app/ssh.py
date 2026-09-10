@@ -19,7 +19,7 @@ from typing import Optional, Callable
 import paramiko
 from paramiko import SSHClient, AutoAddPolicy, SFTPClient
 
-WORKSPACE = Path("/home/seeed/bsp-workspace")
+WORKSPACE = Path("/media/seeed/bsp-ssd1/bsp-workspace")
 
 DEFAULT_PORT = 22
 DEFAULT_USER = "nvidia"

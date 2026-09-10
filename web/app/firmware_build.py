@@ -20,7 +20,7 @@ from typing import Optional, Callable, Dict, List, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 
-WORKSPACE = Path("/home/seeed/bsp-workspace")
+WORKSPACE = Path("/media/seeed/bsp-ssd1/bsp-workspace")
 DOWNLOAD_DIR = WORKSPACE / "Downloads"
 SOURCE_DIR = WORKSPACE / "Source"
 FLASH_WS_DIR = WORKSPACE / "FlashWorkspace"

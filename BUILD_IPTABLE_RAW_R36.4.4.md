@@ -39,14 +39,14 @@ https://developer.nvidia.com/embedded/jetson-linux-r3644
 Download **Driver Package (BSP) Sources**, named `public_sources.tbz2`. The generic downloader in this workspace discovers the official release page and source link instead of constructing a download URL:
 
 ```bash
-cd /home/seeed/bsp-workspace
+cd /media/seeed/bsp-ssd1/bsp-workspace
 ./download-jetson-bsp-sources.sh R36.4.4
 ```
 
 The archive is stored at:
 
 ```text
-/home/seeed/bsp-workspace/Downloads/R36.4.4/public_sources.tbz2
+/media/seeed/bsp-ssd1/bsp-workspace/Downloads/R36.4.4/public_sources.tbz2
 ```
 
 Verify it:
@@ -108,7 +108,7 @@ tar -xjf toolchain/aarch64--glibc--stable-2022.08-1.tar.bz2 -C toolchain
 The compiler prefix is:
 
 ```text
-/home/seeed/bsp-workspace/toolchain/aarch64--glibc--stable-2022.08-1/bin/aarch64-buildroot-linux-gnu-
+/media/seeed/bsp-ssd1/bsp-workspace/toolchain/aarch64--glibc--stable-2022.08-1/bin/aarch64-buildroot-linux-gnu-
 ```
 
 The kernel configuration tools require `flex`, `bison`, and `m4`. Install them system-wide when sudo is available:
@@ -125,7 +125,7 @@ The supplied build script also supports workspace-local copies under `tools/host
 Run the prepared build script:
 
 ```bash
-cd /home/seeed/bsp-workspace
+cd /media/seeed/bsp-ssd1/bsp-workspace
 ./build-iptable-raw-r36.4.4.sh
 ```
 
@@ -140,7 +140,7 @@ The script does the following:
 The output module is:
 
 ```text
-/home/seeed/bsp-workspace/Build/R36.4.4-iptable-raw/net/ipv4/netfilter/iptable_raw.ko
+/media/seeed/bsp-ssd1/bsp-workspace/Build/R36.4.4-iptable-raw/net/ipv4/netfilter/iptable_raw.ko
 ```
 
 Validate it on the host PC:

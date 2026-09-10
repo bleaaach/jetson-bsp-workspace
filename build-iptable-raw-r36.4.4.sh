@@ -11,14 +11,20 @@
 
 # ========== 第1步：定义路径变量 ==========
 # 获取脚本所在的目录，作为所有路径的基准
-#   ${BASH_SOURCE[0]}     = 脚本自己的路径（如 /home/seeed/bsp-workspace/build-iptable-raw-r36.4.4.sh）
-#   dirname "..."        = 去掉文件名，只保留目录（/home/seeed/bsp-workspace/）
+#   ${BASH_SOURCE[0]}     = 脚本自己的路径（如 /media/seeed/bsp-ssd1/bsp-workspace/build-iptable-raw-r36.4.4.sh）
+#   dirname "..."        = 去掉文件名，只保留目录（/media/seeed/bsp-ssd1/bsp-workspace/）
 #   cd ... && pwd        = 进入目录，输出绝对路径
 #   $(...)               = 把命令结果赋值给变量
-# 结果：workspace_dir = /home/seeed/bsp-workspace/
+# 结果：workspace_dir = /media/seeed/bsp-ssd1/bsp-workspace/
 workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# 内核源码目录
-kernel_source="${workspace_dir}/Source/R36.4.4/kernel-jammy-src"
+# 内核源码目录（兼容两种布局）
+kernel_source=""
+for d in "${workspace_dir}/Source/R36.4.4/kernel-jammy-src" "${workspace_dir}/Source/R36.4.4/kernel/kernel-jammy-src"; do
+    if [[ -f "${d}/Makefile" ]]; then
+        kernel_source="${d}"
+        break
+    fi
+done
 # 编译输出目录（编译产物放这里）
 kernel_output="${workspace_dir}/Build/R36.4.4-iptable-raw"
 # 交叉编译器路径前缀（用于在 x86_64 PC 上编译 ARM64 代码）

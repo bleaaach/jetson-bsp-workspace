@@ -10,7 +10,7 @@
 set -u
 
 JETSON_HOST="${JETSON_HOST:-seeed@192.168.137.137}"
-WORKSPACE="/home/seeed/bsp-workspace"
+WORKSPACE="/media/seeed/bsp-ssd1/bsp-workspace"
 BUILD="${WORKSPACE}/Build"
 
 declare -A MODULES=(
