@@ -157,7 +157,11 @@ case "${CMD}" in
             [[ -n "${OUT}" ]] && TAR_OUT="${OUT}/mfi_${BOARD_NAME}-sku${BOARDSKU}.tar.gz" || TAR_OUT="${BSP_TREE}/mfi_${BOARD_NAME}-sku${BOARDSKU}.tar.gz"
             [[ -e "${TAR_OUT}" ]] && warn "已存在, 覆盖: ${TAR_OUT}"
             sudorun BOARDID="${BOARDID}" BOARDSKU="${BOARDSKU}" FAB="${FAB}" BOARDREV="${BOARDREV}" CHIP_SKU="${CHIP_SKU}" \
-                ./tools/kernel_flash/l4t_initrd_flash.sh "${common_args[@]}" \
+                ./tools/kernel_flash/l4t_initrd_flash.sh \
+                --external-device nvme0n1p1 \
+                -c tools/kernel_flash/flash_l4t_nvme.xml \
+                -S 80GiB \
+                "${common_args[@]}" \
                 --no-flash --massflash 5 --showlogs --network usb0 \
                 "${BOARD_NAME}" external
             # massflash 产物默认在 BSP_TREE 根
