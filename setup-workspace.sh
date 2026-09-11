@@ -73,8 +73,9 @@ if (( SKIP_DOWNLOAD )); then
     warn "跳过下载 (--skip-download)"
 else
     section "下载 NVIDIA 官方包: ${VERSION}"
-    rel="${VERSION#R}"
-    arch=${VERSION}_aarch64
+    rel="${VERSION#R}"                            # 36.4.3
+    rel_minor="${rel#*.}"                         # 4.3 (release 目录 vX.Y)
+    release_dir="r${rel%%.*}_release_v${rel_minor}"  # r36_release_v4.3
     dl() { # name url
         local name="$1" url="$2" dest="${DOWNLOADS}/${VERSION}/${name}"
         if [[ -f "${dest}" ]]; then ok "已存在: ${name}"; return; fi
@@ -83,9 +84,9 @@ else
         mv "${dest}.part" "${dest}"
         ok "${name}"
     }
-    dl "public_sources.tbz2" "https://developer.nvidia.com/downloads/embedded/l4t/r36_release_v4.3/release/public_sources.tbz2"
-    dl "Jetson_Linux_r36.4.3_aarch64.tbz2" "https://developer.nvidia.com/downloads/embedded/l4t/r36_release_v4.3/release/Jetson_Linux_r36.4.3_aarch64.tbz2"
-    dl "Tegra_Linux_Sample-Root-Filesystem_r36.4.3_aarch64.tbz2" "https://developer.nvidia.com/downloads/embedded/l4t/r36_release_v4.3/release/Tegra_Linux_Sample-Root-Filesystem_r36.4.3_aarch64.tbz2"
+    dl "public_sources.tbz2" "https://developer.nvidia.com/downloads/embedded/l4t/${release_dir}/sources/public_sources.tbz2"
+    dl "Jetson_Linux_${rel}_aarch64.tbz2" "https://developer.nvidia.com/downloads/embedded/l4t/${release_dir}/release/Jetson_Linux_${rel}_aarch64.tbz2"
+    dl "Tegra_Linux_Sample-Root-Filesystem_${rel}_aarch64.tbz2" "https://developer.nvidia.com/downloads/embedded/l4t/${release_dir}/release/Tegra_Linux_Sample-Root-Filesystem_${rel}_aarch64.tbz2"
 fi
 
 # ---------- 3. 工具链 ----------
@@ -156,6 +157,7 @@ fi
 # ---------- 6. 完整刷机包 (bsp/<ver>/Linux_for_Tegra) ----------
 section "完整刷机包 bsp/${VERSION}/Linux_for_Tegra"
 BSP_TREE="${BSP_DIR}/${VERSION}/Linux_for_Tegra"
+rel="${VERSION#R}"   # 解压段也要用 (下载段可能被 --skip-download 跳过)
 if [[ -f "${BSP_TREE}/flash.sh" ]]; then
     ok "已存在: ${BSP_TREE}"
 else
@@ -163,7 +165,7 @@ else
     if [[ ! -f "${L4T_BASE}/flash.sh" ]]; then
         echo "解压 NVIDIA 底包 ..."
         mkdir -p "${DOWNLOADS}/${VERSION}/l4t_tmp"
-        tar -xjf "${DOWNLOADS}/${VERSION}/Jetson_Linux_r36.4.3_aarch64.tbz2" -C "${DOWNLOADS}/${VERSION}/l4t_tmp/"
+        tar -xjf "${DOWNLOADS}/${VERSION}/Jetson_Linux_${rel}_aarch64.tbz2" -C "${DOWNLOADS}/${VERSION}/l4t_tmp/"
         mv "${DOWNLOADS}/${VERSION}/l4t_tmp/Linux_for_Tegra" "${L4T_BASE}"
         rmdir "${DOWNLOADS}/${VERSION}/l4t_tmp"
         ok "NVIDIA 底包: ${L4T_BASE}"
@@ -175,7 +177,7 @@ else
     cp -a "${REPOS_DIR}/Linux_for_Tegra/". "${BSP_TREE}/"
     shopt -u dotglob
     echo "解压 rootfs ..."
-    sudo tar -xpf "${DOWNLOADS}/${VERSION}/Tegra_Linux_Sample-Root-Filesystem_r36.4.3_aarch64.tbz2" -C "${BSP_TREE}/rootfs/"
+    sudo tar -xpf "${DOWNLOADS}/${VERSION}/Tegra_Linux_Sample-Root-Filesystem_${rel}_aarch64.tbz2" -C "${BSP_TREE}/rootfs/"
     echo "运行 apply_binaries.sh ..."
     cd "${BSP_TREE}"
     sudo -E ./apply_binaries.sh
