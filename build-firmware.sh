@@ -110,6 +110,15 @@ find_board() { # $1=型号 $2=SKU (空=型号第一个)
     return 1
 }
 
+# 后台运行需提供密码: SUDO_PASS=xxx ./build-firmware.sh ...
+sudorun() { # 带环境变量执行命令
+    if [[ -n "${SUDO_PASS:-}" ]]; then
+        echo "${SUDO_PASS}" | sudo -S env "$@"
+    else
+        sudo env "$@"
+    fi
+}
+
 # ---------- 主逻辑 ----------
 case "${CMD}" in
     list)
@@ -144,9 +153,10 @@ case "${CMD}" in
         common_args=(-p "-c bootloader/generic/cfg/flash_t234_qspi.xml --no-systemimg")
 
         if [[ "${CMD}" == "mfi" ]]; then
-            [[ -n "${OUT}" ]] && TAR_OUT="${OUT}/mfi_${BOARD_NAME}.tar.gz" || TAR_OUT="${BSP_TREE}/mfi_${BOARD_NAME}.tar.gz"
+            # 产物带 SKU 后缀, 避免 16G/8G 等变体同名覆盖
+            [[ -n "${OUT}" ]] && TAR_OUT="${OUT}/mfi_${BOARD_NAME}-sku${BOARDSKU}.tar.gz" || TAR_OUT="${BSP_TREE}/mfi_${BOARD_NAME}-sku${BOARDSKU}.tar.gz"
             [[ -e "${TAR_OUT}" ]] && warn "已存在, 覆盖: ${TAR_OUT}"
-            sudo env BOARDID="${BOARDID}" BOARDSKU="${BOARDSKU}" FAB="${FAB}" BOARDREV="${BOARDREV}" CHIP_SKU="${CHIP_SKU}" \
+            sudorun BOARDID="${BOARDID}" BOARDSKU="${BOARDSKU}" FAB="${FAB}" BOARDREV="${BOARDREV}" CHIP_SKU="${CHIP_SKU}" \
                 ./tools/kernel_flash/l4t_initrd_flash.sh "${common_args[@]}" \
                 --no-flash --massflash 5 --showlogs --network usb0 \
                 "${BOARD_NAME}" external
@@ -165,7 +175,7 @@ case "${CMD}" in
             fi
         else
             lsusb 2>/dev/null | grep -qi nvidia || warn "未检测到 NVIDIA 设备, 请确认板子处于 Recovery 模式"
-            sudo env BOARDID="${BOARDID}" BOARDSKU="${BOARDSKU}" FAB="${FAB}" BOARDREV="${BOARDREV}" CHIP_SKU="${CHIP_SKU}" \
+            sudorun BOARDID="${BOARDID}" BOARDSKU="${BOARDSKU}" FAB="${FAB}" BOARDREV="${BOARDREV}" CHIP_SKU="${CHIP_SKU}" \
                 ./tools/kernel_flash/l4t_initrd_flash.sh \
                 --external-device nvme0n1p1 \
                 -c tools/kernel_flash/flash_l4t_t234_nvme.xml \
